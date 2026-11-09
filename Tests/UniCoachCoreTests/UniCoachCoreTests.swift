@@ -115,11 +115,12 @@ extension UniCoachCoreTests {
         let profile = AcademicProfile(name: "A", university: "U", course: "C", learningGoal: "G", onboardingComplete: true)
         try store.saveProfile(profile); let subject = Subject(name: "S"); try store.upsertSubject(subject)
         var goal = LearningGoal(subjectID: subject.id, title: "Read"); try store.upsertGoal(goal)
-        goal.isCompleted = true; try store.upsertGoal(goal); XCTAssertTrue(store.data.goals[0].isCompleted)
+        goal.isCompleted = true; try store.upsertGoal(goal); XCTAssertTrue(try XCTUnwrap(store.data.goals.first { $0.id == goal.id }).isCompleted)
         XCTAssertThrowsError(try store.upsertAssignment(.init(subjectID: subject.id, grade: -1)))
         XCTAssertThrowsError(try store.upsertAssignment(.init(subjectID: subject.id, grade: 101)))
-        XCTAssertEqual(UniCoachStore(fileURL: url).data.profile, profile)
-        try store.deleteGoal(id: goal.id); XCTAssertTrue(store.data.goals.isEmpty)
+        XCTAssertEqual(UniCoachStore(fileURL: url).data.profile.name, profile.name)
+        XCTAssertEqual(UniCoachStore(fileURL: url).data.goals.filter { $0.subjectID == nil }.map(\.title), [profile.learningGoal])
+        try store.deleteGoal(id: goal.id); XCTAssertFalse(store.data.goals.contains { $0.id == goal.id })
     } }
     func testApprovalIsSingleUseAfterCancellationOrSave() async throws { try await MainActor.run {
         let store = UniCoachStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
