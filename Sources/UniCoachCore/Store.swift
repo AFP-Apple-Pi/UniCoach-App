@@ -44,15 +44,31 @@ import Observation
   }
   public func saveProfile(_ profile: AcademicProfile) throws {
     var n = data
-    n.profile = profile
+    var normalized = profile
+    let text = normalized.learningGoal
+    normalized.learningGoal = ""
+    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !n.goals.contains(where: { $0.subjectID == nil && $0.title == text })
+    {
+      n.goals.append(LearningGoal(title: text))
+    }
+    n.profile = normalized
     try commit(n)
   }
   public func upsertSubject(_ subject: Subject) throws {
     var n = data
+    var normalized = subject
+    let text = normalized.academicGoal
+    normalized.academicGoal = ""
+    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !n.goals.contains(where: { $0.subjectID == subject.id && $0.title == text })
+    {
+      n.goals.append(LearningGoal(subjectID: subject.id, title: text, isDemo: subject.isDemo))
+    }
     if let i = n.subjects.firstIndex(where: { $0.id == subject.id }) {
-      n.subjects[i] = subject
+      n.subjects[i] = normalized
     } else {
-      n.subjects.append(subject)
+      n.subjects.append(normalized)
     }
     try commit(n)
   }
@@ -60,15 +76,19 @@ import Observation
     var n = data
     n.subjects.removeAll { $0.id == id }
     n.assignments.removeAll { $0.subjectID == id }
-    n.goals.removeAll { $0.subjectID == id }
+    n.goals.removeAll { $0.subjectID == id && $0.originAssignmentID == nil }
     try commit(n)
   }
   public func upsertAssignment(_ assignment: Assignment) throws {
     guard data.subjects.contains(where: { $0.id == assignment.subjectID }) else {
       throw UniCoachError.invalidRelationship
     }
-    if let grade = assignment.grade, !grade.isFinite || grade < 0 || grade > 100 {
-      throw UniCoachError.invalidGrade
+    switch (assignment.score, assignment.outOf) {
+    case (nil, nil): break
+    case (nil, let maximum?) where maximum.isFinite && maximum > 0: break
+    case (let score?, let maximum?)
+    where score.isFinite && maximum.isFinite && maximum > 0 && score >= 0 && score <= maximum: break
+    default: throw UniCoachError.invalidGrade
     }
     var n = data
     if let i = n.assignments.firstIndex(where: { $0.id == assignment.id }) {
@@ -85,13 +105,21 @@ import Observation
   }
   public func upsertGoal(_ goal: LearningGoal) throws {
     if let id = goal.subjectID, !data.subjects.contains(where: { $0.id == id }) {
-      throw UniCoachError.invalidRelationship
+      guard let existing = data.goals.first(where: { $0.id == goal.id }), existing.subjectID == id
+      else {
+        throw UniCoachError.invalidRelationship
+      }
     }
     var n = data
+    var updated = goal
     if let i = n.goals.firstIndex(where: { $0.id == goal.id }) {
-      n.goals[i] = goal
+      if updated.isComplete != n.goals[i].isComplete {
+        updated.completedAt = updated.isComplete ? Date() : nil
+      }
+      n.goals[i] = updated
     } else {
-      n.goals.append(goal)
+      if updated.isComplete && updated.completedAt == nil { updated.completedAt = Date() }
+      n.goals.append(updated)
     }
     try commit(n)
   }
@@ -107,16 +135,19 @@ import Observation
   }
   @discardableResult public func addSampleSubject() throws -> Subject {
     let subject = Subject(
-      code: "DEMO101", name: "Example subject", credits: 6, tutor: "Example tutor",
-      academicGoal: "Practise planning an assignment", isDemo: true)
+      code: "DEMO101", name: "Example subject", credits: 6, tutor: "Example tutor", isDemo: true)
     var n = data
     n.subjects.append(subject)
+    n.goals.append(
+      LearningGoal(subjectID: subject.id, title: "Practise planning an assignment", isDemo: true))
     n.assignments.append(
       Assignment(
         subjectID: subject.id, title: "Example assignment",
         brief: "Plan a short evidence-based response.",
         dueDate: Date().addingTimeInterval(7 * 86400),
-        tutorFeedback: "Your example is clear. Explain how the evidence supports your claim.",
+        tutorFeedback:
+          "Your example is clear. You should explain how the evidence supports your claim.",
+        reflection: "I want to make my reasoning easier to follow.",
         isDemo: true,
         submittedWork:
           "Community gardens can improve wellbeing. One study found participants met neighbours more often."
@@ -124,6 +155,50 @@ import Observation
     try commit(n)
     return subject
   }
+  public func subjectMarks(subjectID: UUID, includeDemo: Bool = false) -> MarkSummary {
+    let graded = data.assignments.filter {
+      $0.subjectID == subjectID && (includeDemo || !$0.isDemo) && $0.score != nil && $0.outOf != nil
+    }
+    return MarkSummary(
+      score: graded.compactMap(\.score).reduce(0, +),
+      outOf: graded.compactMap(\.outOf).reduce(0, +), gradedCount: graded.count)
+  }
+
+  public func gradedAssignments(subjectID: UUID, includeDemo: Bool = false) -> [Assignment] {
+    data.assignments.filter {
+      $0.subjectID == subjectID && (includeDemo || !$0.isDemo) && $0.score != nil && $0.outOf != nil
+    }.sorted { lhs, rhs in
+      switch (lhs.chartDate, rhs.chartDate) {
+      case (let left?, let right?):
+        return left == right ? lhs.id.uuidString < rhs.id.uuidString : left < right
+      case (_?, nil): return true
+      case (nil, _?): return false
+      case (nil, nil): return lhs.id.uuidString < rhs.id.uuidString
+      }
+    }
+  }
+
+  @discardableResult public func createGoalFromReport(reportID: UUID) throws -> LearningGoal {
+    if let existing = data.goals.first(where: {
+      $0.sourceReportID == reportID && $0.isAdviceGoal
+    }) {
+      return existing
+    }
+    guard let report = data.reports.first(where: { $0.id == reportID }),
+      let assignmentID = report.assignmentID,
+      let assignment = data.assignments.first(where: { $0.id == assignmentID }),
+      let title = report.output.advice?.nextStep.trimmingCharacters(in: .whitespacesAndNewlines),
+      !title.isEmpty
+    else { throw UniCoachError.invalidRelationship }
+    let goal = LearningGoal(
+      subjectID: assignment.subjectID, title: title, sourceReportID: reportID,
+      originAssignmentID: assignmentID, isDemo: assignment.isDemo, isAdviceGoal: true)
+    var next = data
+    next.goals.append(goal)
+    try commit(next)
+    return goal
+  }
+
   public func contextSources(assignmentID: UUID? = nil) -> [ContextSource] {
     var sources: [ContextSource] = []
     func add(_ id: String, _ title: String, _ text: String, _ record: String) {
@@ -141,17 +216,13 @@ import Observation
     }
     let realAssignmentIDs = Set(realAssignments.map(\.id))
     let realGoals = data.goals.filter {
-      $0.subjectID == nil || realSubjectIDs.contains($0.subjectID!)
+      !$0.isDemo && ($0.subjectID == nil || realSubjectIDs.contains($0.subjectID!))
     }
     let realFocus = data.focusActions.filter {
       !$0.isDemo && realAssignmentIDs.contains($0.assignmentID)
         && realSubjectIDs.contains($0.subjectID)
     }
-    let grades = realAssignments.compactMap(\.grade)
-    let gradeSummary =
-      grades.isEmpty
-      ? "No grades entered"
-      : "Average entered grade: \(grades.reduce(0, +) / Double(grades.count))%"
+    let gradeSummary = "Grades available per subject"
     let progress = [
       "Subjects: \(realSubjects.count)", "Assignments: \(realAssignments.count)", gradeSummary,
       "Goals completed: \(realGoals.filter(\.isCompleted).count) of \(realGoals.count)",
@@ -169,7 +240,6 @@ import Observation
         p.name.isEmpty ? "" : "Name: \(p.name)",
         p.university.isEmpty ? "" : "University: \(p.university)",
         p.course.isEmpty ? "" : "Course: \(p.course)",
-        p.learningGoal.isEmpty ? "" : "Learning goal: \(p.learningGoal)",
       ].filter { !$0.isEmpty }.joined(separator: "\n"), record(p))
     let selected = assignmentID.flatMap { id in data.assignments.first { $0.id == id } }
     let subjects =
@@ -180,7 +250,6 @@ import Observation
         "subject:\(s.id.uuidString)", "Subject overview",
         [
           "Code: \(s.code)", "Subject: \(s.name)", "Credits: \(s.credits)", "Tutor: \(s.tutor)",
-          "Academic goal: \(s.academicGoal)",
         ].joined(separator: "\n"), record(s))
     }
     let assignments = selected.map { [$0] } ?? (assignmentID == nil ? data.assignments : [])
@@ -308,7 +377,7 @@ import Observation
       !explanation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       !nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { throw UniCoachError.invalidEvidence }
-    let passages = evidencePassages(request: request)
+    let passages = evidencePassages(request: request) + feedbackSentencePassages(request: request)
     let prefix = "assignment:\(assignmentID.uuidString):"
     guard
       let work = passages.first(where: {
@@ -371,7 +440,12 @@ import Observation
       title: cleanTitle, createdAt: now, updatedAt: now, findingIndex: findingIndex,
       isDemo: assignment.isDemo)
     var next = data
-    next.focusActions.append(action)
+    next.goals.append(
+      LearningGoal(
+        id: action.id, subjectID: action.subjectID, title: action.title,
+        sourceReportID: action.reportID, createdAt: action.createdAt,
+        originAssignmentID: action.assignmentID, legacyFocusStatus: action.status,
+        findingIndex: action.findingIndex, isDemo: action.isDemo, focusUpdatedAt: action.updatedAt))
     try commit(next)
     return action
   }
@@ -394,25 +468,71 @@ import Observation
       reportID: reportID, assignmentID: assignmentID, subjectID: assignment.subjectID,
       title: cleanTitle, createdAt: now, updatedAt: now, isDemo: assignment.isDemo)
     var next = data
-    next.focusActions.append(action)
+    next.goals.append(
+      LearningGoal(
+        id: action.id, subjectID: action.subjectID, title: action.title,
+        sourceReportID: action.reportID, createdAt: action.createdAt,
+        originAssignmentID: action.assignmentID, legacyFocusStatus: action.status,
+        findingIndex: action.findingIndex, isDemo: action.isDemo, focusUpdatedAt: action.updatedAt))
     try commit(next)
     return action
   }
 
   public func updateFocusStatus(id: UUID, status: FocusStatus) throws {
     var next = data
-    guard let index = next.focusActions.firstIndex(where: { $0.id == id }) else {
+    guard let index = next.goals.firstIndex(where: { $0.id == id && $0.legacyFocusStatus != nil })
+    else {
       throw UniCoachError.invalidRelationship
     }
-    next.focusActions[index].status = status
-    next.focusActions[index].updatedAt = Date()
+    next.goals[index].legacyFocusStatus = status
+    next.goals[index].focusUpdatedAt = Date()
     try commit(next)
   }
 
   public func deleteFocus(id: UUID) throws {
     var next = data
-    next.focusActions.removeAll { $0.id == id }
+    next.goals.removeAll { $0.id == id && $0.legacyFocusStatus != nil }
     try commit(next)
+  }
+
+  /// Exact sentences from the approved tutor feedback for the anchored assignment.
+  public func feedbackSentences(request: ApprovedRequest) -> [String] {
+    feedbackSentencePassages(request: request).map(\.quote)
+  }
+
+  /// Sentence IDs resolve locally to exact approved text, so a model need not copy quotes.
+  public func feedbackSentencePassages(request: ApprovedRequest) -> [EvidencePassage] {
+    guard let id = request.assignmentID,
+      let feedback = request.sources.first(where: {
+        $0.id == "assignment:\(id.uuidString):feedback"
+      })
+    else { return [] }
+    let text = feedback.text
+    return sentenceRanges(in: text).map { range in
+      let nsRange = NSRange(range, in: text)
+      return EvidencePassage(
+        sourceID: feedback.id,
+        passageID: "\(feedback.id):sentence:\(nsRange.location):\(nsRange.length)",
+        quote: String(text[range]), location: nsRange.location, length: nsRange.length)
+    }
+  }
+
+  private func validateAdvice(
+    _ advice: CoachingAdvice, request: ApprovedRequest, citedIDs: Set<String>
+  ) throws {
+    guard let id = request.assignmentID else { throw UniCoachError.invalidEvidence }
+    let sentences = Set(feedbackSentences(request: request))
+    let items = advice.keepDoing + advice.improve
+    guard advice.keepDoing.count <= 3, advice.improve.count <= 3,
+      items.allSatisfy({
+        !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          && sentences.contains($0.tutorQuote)
+      }),
+      advice.improve.isEmpty
+        ? advice.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        : !advice.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      items.isEmpty || citedIDs.contains("assignment:\(id.uuidString):feedback")
+    else { throw UniCoachError.invalidEvidence }
   }
 
   public func beginGeneration(for request: ApprovedRequest) throws -> GenerationTicket {
@@ -442,11 +562,23 @@ import Observation
         let label = passage.sourceID.hasSuffix(":work") ? "Submitted work" : "Tutor feedback"
         return "\(label): \(passage.quote)"
       }
+      let sentences = feedbackSentences(request: request)
+      func includesWord(_ sentence: String, keywords: Set<String>) -> Bool {
+        let words = sentence.lowercased().components(separatedBy: CharacterSet.letters.inverted)
+        return words.contains { keywords.contains($0) }
+      }
+      let keep = sentences.filter {
+        includesWord($0, keywords: ["strong", "good", "clear", "well"])
+      }.prefix(3).map { AdviceItem(text: $0, tutorQuote: $0) }
+      let improve = sentences.filter {
+        includesWord($0, keywords: ["needs", "weak", "missing", "should", "unclear"])
+      }.prefix(3).map { AdviceItem(text: $0, tutorQuote: $0) }
+      let advice = CoachingAdvice(
+        keepDoing: Array(keep), improve: Array(improve), nextStep: improve.first?.text ?? "")
       return MentorOutput(
-        summary: "Contextual offline review (not AI). The excerpts are not automatically linked.",
-        recommendations: excerpts + [
-          "Consider what to keep doing and what to improve, then choose a next step."
-        ], evidenceSourceIDs: request.sources.map(\.id), findings: [])
+        summary: "Keyword-based offline review (not AI). Excerpts are not automatically linked.",
+        recommendations: excerpts, evidenceSourceIDs: request.sources.map(\.id), findings: [],
+        advice: advice)
     }
     let reviews = request.sources.enumerated().map { index, source in
       "[S\(index + 1)] Review approved detail: \(String(source.text.prefix(180)))"
@@ -488,6 +620,10 @@ import Observation
       !output.evidenceSourceIDs.isEmpty || pairedInsufficient,
       output.evidenceSourceIDs.allSatisfy({ allowed.contains($0) })
     else { throw UniCoachError.invalidEvidence }
+    if let advice = output.advice {
+      guard hasApprovedPair else { throw UniCoachError.invalidEvidence }
+      try validateAdvice(advice, request: request, citedIDs: Set(output.evidenceSourceIDs))
+    }
     if let findings = output.findings {
       guard hasApprovedPair else { throw UniCoachError.invalidEvidence }
       try validateFindings(findings, request: request, citedIDs: Set(output.evidenceSourceIDs))
@@ -512,4 +648,58 @@ private func record<T: Encodable>(_ value: T) -> String {
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys]
   return (try? encoder.encode(value)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+}
+
+/// Conservative sentence boundaries retain punctuation, decimals and common abbreviations.
+private func sentenceRanges(in text: String) -> [Range<String.Index>] {
+  var ranges: [Range<String.Index>] = []
+  var start = text.startIndex
+  var cursor = start
+  let abbreviations: Set<String> = [
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "e.g.", "i.e.", "vs.", "etc.",
+  ]
+  func append(_ raw: Range<String.Index>) {
+    let part = text[raw]
+    guard let first = part.firstIndex(where: { !$0.isWhitespace }),
+      let last = part.lastIndex(where: { !$0.isWhitespace })
+    else { return }
+    ranges.append(first..<text.index(after: last))
+  }
+  while cursor < text.endIndex {
+    let character = text[cursor]
+    let next = text.index(after: cursor)
+    if character.isNewline {
+      append(start..<cursor)
+      start = next
+      cursor = next
+      continue
+    }
+    guard character == "." || character == "!" || character == "?" else {
+      cursor = next
+      continue
+    }
+    if character == ".", cursor > start, next < text.endIndex,
+      text[text.index(before: cursor)].isNumber && text[next].isNumber
+    {
+      cursor = next
+      continue
+    }
+    if character == ".", next < text.endIndex, text[next].isLetter {
+      cursor = next
+      continue
+    }
+    var end = next
+    while end < text.endIndex && ".!?".contains(text[end]) { end = text.index(after: end) }
+    let prefix = text[start..<end].lowercased()
+    let token = prefix.split(whereSeparator: { $0.isWhitespace }).last.map(String.init) ?? ""
+    if abbreviations.contains(token) && end < text.endIndex {
+      cursor = end
+      continue
+    }
+    append(start..<end)
+    start = end
+    cursor = end
+  }
+  append(start..<text.endIndex)
+  return ranges
 }

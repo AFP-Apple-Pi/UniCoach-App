@@ -16,11 +16,6 @@ struct ProfileScreen: View {
           Text(app.data.profile.course).foregroundStyle(.secondary)
         }.padding(.vertical, 8)
       }
-      Section("Learning goal") {
-        Text(
-          app.data.profile.learningGoal.isEmpty
-            ? "No learning goal added yet." : app.data.profile.learningGoal)
-      }
       Section("Privacy") {
         Text(
           "Your data and mentor requests stay on this device. Imported files are reviewed before use."
@@ -79,7 +74,6 @@ struct ProfileEditor: View {
           TextField("Name", text: $profile.name)
           TextField("University", text: $profile.university)
           TextField("Course", text: $profile.course)
-          TextField("Learning goal", text: $profile.learningGoal, axis: .vertical)
         }
         if onboarding {
           Text("All fields are optional and can be changed later.").font(.caption).foregroundStyle(
@@ -104,167 +98,184 @@ struct ProfileEditor: View {
 }
 struct ProgressScreen: View {
   @Environment(AppState.self) private var app
-  @State private var subjectID: UUID?
-  @State private var assignmentID: UUID?
-  @State private var goal: LearningGoal?
-  @State private var deleting: LearningGoal?
-  @State private var deletingFocus: FocusAction?
-  var assignments: [Assignment] {
-    app.data.assignments.filter {
-      !$0.isDemo && (subjectID == nil || $0.subjectID == subjectID)
-        && (assignmentID == nil || $0.id == assignmentID)
+  @State private var selectedSubject: UUID?
+  @State private var editingGoal: LearningGoal?
+  @State private var deletingGoal: LearningGoal?
+
+  private var subjects: [Subject] { app.data.subjects.filter { !$0.isDemo } }
+  private var goals: [LearningGoal] {
+    app.data.goals.filter {
+      !$0.isDemo && (selectedSubject == nil || $0.subjectID == selectedSubject)
     }
   }
-  var goals: [LearningGoal] {
-    let sampleIDs = Set(app.data.subjects.filter(\.isDemo).map(\.id))
-    return app.data.goals.filter {
-      ($0.subjectID.map { !sampleIDs.contains($0) } ?? true)
-        && (subjectID == nil || $0.subjectID == subjectID)
-    }
+  private var groups: [String] {
+    Array(
+      Set(
+        subjects.map {
+          $0.semester?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? $0.semester! : "Unspecified semester"
+        })
+    ).sorted()
   }
-  var average: Double? {
-    let grades = assignments.compactMap(\.grade)
-    return grades.isEmpty ? nil : grades.reduce(0, +) / Double(grades.count)
+  private var allGrades: [Assignment] {
+    subjects.filter { selectedSubject == nil || $0.id == selectedSubject }
+      .flatMap { app.store.gradedAssignments(subjectID: $0.id) }
+      .sorted { lhs, rhs in
+        switch (lhs.chartDate, rhs.chartDate) {
+        case (let left?, let right?):
+          return left == right ? lhs.id.uuidString < rhs.id.uuidString : left < right
+        case (_?, nil): return true
+        case (nil, _?): return false
+        case (nil, nil): return lhs.id.uuidString < rhs.id.uuidString
+        }
+      }
   }
+  private var datedGrades: [Assignment] { allGrades.filter { $0.chartDate != nil } }
   var body: some View {
     List {
       Section {
-        Picker("Subject", selection: $subjectID) {
+        Picker("Subject", selection: $selectedSubject) {
           Text("All subjects").tag(Optional<UUID>.none)
-          ForEach(app.data.subjects.filter { !$0.isDemo }) { subject in
-            Text(subject.name).tag(Optional(subject.id))
-          }
-        }.onChange(of: subjectID) { _, _ in assignmentID = nil }
-        Picker("Assignment", selection: $assignmentID) {
-          Text("All assignments").tag(Optional<UUID>.none)
-          ForEach(
-            app.data.assignments.filter {
-              !$0.isDemo && (subjectID == nil || $0.subjectID == subjectID)
-            }
-          ) { assignment in
-            Text(assignment.title).tag(Optional(assignment.id))
-          }
+          ForEach(subjects) { subject in Text(subject.name).tag(Optional(subject.id)) }
         }
       }
       Section("Your progress") {
-        LabeledContent(
-          "Subjects",
-          value: "\(subjectID == nil ? app.data.subjects.filter { !$0.isDemo }.count : 1)")
-        LabeledContent(
-          "Entered-grade average",
-          value: average.map { "\($0.formatted(.number.precision(.fractionLength(1))))%" }
-            ?? "No grades entered")
-        LabeledContent("Assignments", value: "\(assignments.count)")
-        LabeledContent("Graded", value: "\(assignments.compactMap(\.grade).count)")
+        LabeledContent("Subjects", value: "\(selectedSubject == nil ? subjects.count : 1)")
         LabeledContent(
           "Goals completed", value: "\(goals.filter(\.isCompleted).count) of \(goals.count)")
-        Text(
-          "Averages use only grades you entered, with equal weight. Sample assignments are excluded."
-        ).font(.caption).foregroundStyle(.secondary)
+        let relevant = app.data.assignments.filter {
+          !$0.isDemo && (selectedSubject == nil || $0.subjectID == selectedSubject)
+        }
+        LabeledContent(
+          "Reflections",
+          value:
+            "\(relevant.filter { !$0.reflection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) of \(relevant.count)"
+        )
       }
-      Section("Reflection practice") {
-        let reflected = assignments.filter {
-          !$0.reflection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.count
-        Text("\(reflected) of \(assignments.count) assignments have a reflection")
+      ForEach(groups, id: \.self) { semester in
+        Section(semester) {
+          ForEach(
+            subjects.filter {
+              ($0.semester?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? $0.semester! : "Unspecified semester") == semester
+                && (selectedSubject == nil || $0.id == selectedSubject)
+            }
+          ) { subject in
+            let marks = app.store.subjectMarks(subjectID: subject.id)
+            NavigationLink {
+              SubjectDetail(subjectID: subject.id)
+            } label: {
+              VStack(alignment: .leading, spacing: 4) {
+                Text(subject.name).font(.headline)
+                if let percentage = marks.percentage {
+                  Text(
+                    "\(percentage.formatted(.number.precision(.fractionLength(2))))% • \(marks.score.formatted()) of \(marks.outOf.formatted()) marks graded so far"
+                  ).font(.caption).foregroundStyle(.secondary)
+                } else {
+                  Text("No marks entered").font(.caption).foregroundStyle(.secondary)
+                }
+              }
+            }
+          }
+        }
       }
-      focusSection(
-        "Your next-assignment focus",
-        actions: app.data.focusActions.filter {
-          !$0.isDemo && (subjectID == nil || $0.subjectID == subjectID)
-            && (assignmentID == nil || $0.assignmentID == assignmentID)
-        })
-      if subjectID == nil && app.data.focusActions.contains(where: { $0.isDemo }) {
-        focusSection("Sample practice", actions: app.data.focusActions.filter { $0.isDemo })
-      }
-      Section("Entered grades") {
-        if assignments.compactMap(\.grade).isEmpty {
-          Text("No grades entered yet. Add a grade to an assignment to see it here.")
-            .foregroundStyle(.secondary)
+      Section("Grades over time") {
+        if datedGrades.isEmpty {
+          Text("No dated grades yet.").foregroundStyle(.secondary)
         } else {
-          Chart(assignments.filter { $0.grade != nil }) { assignment in
+          Chart(datedGrades) { item in
             BarMark(
-              x: .value("Assignment", assignment.id.uuidString),
-              y: .value("Grade", assignment.grade ?? 0)
-            ).foregroundStyle(teal).accessibilityLabel(assignment.title).accessibilityValue(
-              "\((assignment.grade ?? 0).formatted()) percent")
-          }.chartXAxis(.hidden).chartYScale(domain: 0...100).frame(height: 180).accessibilityLabel(
-            "Entered assignment grades, out of 100 percent")
-          ForEach(assignments.filter { $0.grade != nil }) { assignment in
-            LabeledContent(assignment.title, value: "\((assignment.grade ?? 0).formatted())%")
+              x: .value("Assignment", item.id.uuidString),
+              y: .value("Percentage", item.percentage ?? 0)
+            )
+            .foregroundStyle(teal).accessibilityLabel(item.title).accessibilityValue(
+              "\((item.percentage ?? 0).formatted()) percent")
+          }.chartXAxis(.hidden).chartYScale(domain: 0...100).frame(height: 180)
+          Text(
+            "Ordered by due date, or creation date when due date is missing. Undated records are not charted."
+          ).font(.caption).foregroundStyle(.secondary)
+          ForEach(datedGrades) { item in
+            LabeledContent(
+              item.title,
+              value: "\((item.percentage ?? 0).formatted(.number.precision(.fractionLength(2))))%")
           }
         }
       }
-      Section("Goals") {
-        ForEach(goals) { item in
-          Button {
-            var updated = item
-            updated.isCompleted.toggle()
-            app.perform { try app.store.upsertGoal(updated) }
-          } label: {
-            Label(item.title, systemImage: item.isCompleted ? "checkmark.circle.fill" : "circle")
-          }.swipeActions {
-            Button("Delete", role: .destructive) { deleting = item }
-            Button("Edit") { goal = item }.tint(.blue)
+      if allGrades.contains(where: { $0.chartDate == nil }) {
+        Section("Grades without a date") {
+          ForEach(allGrades.filter { $0.chartDate == nil }) { item in
+            LabeledContent(
+              item.title,
+              value: "\((item.percentage ?? 0).formatted(.number.precision(.fractionLength(2))))%")
           }
         }
+      }
+      Section("Learning goals") {
+        if goals.isEmpty { Text("No learning goals yet.").foregroundStyle(.secondary) }
+        ForEach(goals) { item in goalRow(item) }
         Button {
-          goal = LearningGoal(subjectID: subjectID)
+          editingGoal = LearningGoal(subjectID: selectedSubject)
         } label: {
           Label("Add goal", systemImage: "plus")
         }
       }
-    }.confirmationDialog(
-      "Delete this focus?",
-      isPresented: Binding(get: { deletingFocus != nil }, set: { if !$0 { deletingFocus = nil } }),
-      titleVisibility: .visible
-    ) {
-      Button("Delete focus", role: .destructive) {
-        if let deletingFocus {
-          app.perform { try app.store.deleteFocus(id: deletingFocus.id) }
-          self.deletingFocus = nil
-        }
+      let samples = app.data.goals.filter(\.isDemo)
+      if !samples.isEmpty {
+        Section("Sample practice") { ForEach(samples) { item in goalRow(item) } }
       }
-    }.navigationTitle("My Progress").sheet(item: $goal) { GoalEditor(goal: $0) }.confirmationDialog(
+    }
+    .navigationTitle("My Progress")
+    .sheet(item: $editingGoal) { GoalEditor(goal: $0) }
+    .confirmationDialog(
       "Delete this goal?",
-      isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+      isPresented: Binding(get: { deletingGoal != nil }, set: { if !$0 { deletingGoal = nil } }),
       titleVisibility: .visible
     ) {
       Button("Delete goal", role: .destructive) {
-        if let deleting {
-          app.perform { try app.store.deleteGoal(id: deleting.id) }
-          self.deleting = nil
+        if let deletingGoal {
+          app.perform { try app.store.deleteGoal(id: deletingGoal.id) }
+          self.deletingGoal = nil
         }
       }
     }
   }
-  @ViewBuilder private func focusSection(_ title: String, actions: [FocusAction]) -> some View {
-    Section(title) {
-      if actions.isEmpty { Text("No focus chosen yet.").foregroundStyle(.secondary) }
-      ForEach(actions) { action in
-        VStack(alignment: .leading, spacing: 8) {
-          Text(action.title).font(.headline)
-          let subject = app.data.subjects.first { $0.id == action.subjectID }
-          let assignment = app.data.assignments.first { $0.id == action.assignmentID }
+  @ViewBuilder private func goalRow(_ goal: LearningGoal) -> some View {
+    Button {
+      var updated = goal
+      updated.isCompleted.toggle()
+      app.perform { try app.store.upsertGoal(updated) }
+    } label: {
+      VStack(alignment: .leading, spacing: 4) {
+        Label(goal.title, systemImage: goal.isCompleted ? "checkmark.circle.fill" : "circle")
+        if let subjectID = goal.subjectID {
+          Text(app.data.subjects.first { $0.id == subjectID }?.name ?? "Former subject").font(
+            .caption
+          ).foregroundStyle(.secondary)
+        }
+        if let assignmentID = goal.originAssignmentID {
           Text(
-            "From: \(subject?.name ?? "Former subject") • \(assignment?.title ?? "Former assignment")"
+            "From: "
+              + (app.data.assignments.first { $0.id == assignmentID }?.title ?? "Former assignment")
           )
           .font(.caption).foregroundStyle(.secondary)
-          Picker(
-            "Your reported status",
-            selection: Binding(
-              get: { action.status },
-              set: { status in
-                app.perform { try app.store.updateFocusStatus(id: action.id, status: status) }
-              }
-            )
-          ) {
-            Text("Working on it").tag(FocusStatus.workingOnIt)
-            Text("Improved (self-reported)").tag(FocusStatus.improved)
-            Text("Awaiting feedback").tag(FocusStatus.awaitingFeedback)
-          }.pickerStyle(.menu)
-        }.swipeActions { Button("Delete", role: .destructive) { deletingFocus = action } }
+        }
+        if let status = goal.legacyFocusStatus {
+          Text("Previously reported: " + legacyStatusLabel(status)).font(.caption).foregroundStyle(
+            .secondary)
+        }
       }
+    }.accessibilityIdentifier("progress.goal." + goal.id.uuidString).accessibilityValue(
+      goal.isCompleted ? "Completed" : "Not completed"
+    ).swipeActions {
+      Button("Delete", role: .destructive) { deletingGoal = goal }
+      Button("Edit") { editingGoal = goal }.tint(.blue)
+    }
+  }
+  private func legacyStatusLabel(_ status: FocusStatus) -> String {
+    switch status {
+    case .workingOnIt: return "Working on it"
+    case .improved: return "Improved"
+    case .awaitingFeedback: return "Awaiting feedback"
     }
   }
 
