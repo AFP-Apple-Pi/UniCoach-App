@@ -126,3 +126,34 @@ Validation:
 - The three existing physical UI regressions passed on the final build: consent reset in 28.447 seconds, a real two-turn Apple conversation in 68.570 seconds, and the assignment/marks/offline-advice/goals flow in 123.358 seconds. Temporary long-request harness cases were removed after verification.
 - After testing, UniCoach launched normally and its normal data file matched the immediate pre-install backup byte-for-byte. Existing subjects, assignments, uploads and conversations were preserved. No private material was used for these long-request tests.
 - No Swift compiler warnings or errors were reported. Xcode emitted its expected AppIntents metadata-skip warning. SwiftLint was not installed.
+
+
+## Final Figma design and chat refresh (10 November 2026)
+
+This revision supersedes the earlier question Form and Apple toggle instructions above. Open **AI Mentor > New conversation** to enter the chat. The animated white Scottish terrier is the AI mentor mascot. Its gentle greeting motion respects Reduce Motion. The message composer remains available throughout the conversation. **Approve & send** explicitly approves Apple on-device AI for the current message, displayed history and any selected source text. **Add context** opens a separate source-selection and exact-text review sheet. Merely reviewing context does not send a request. Source selection resets after every attempt, and earlier source snapshots are never automatically reattached.
+
+At accessibility text sizes, the composer uses a compact **Approve** button and accessible context/information controls. **Review request** shows the full processing explanation, current message, history and selected text in a scrollable sheet. Dynamic Type is not capped. The app still preserves the 50,000-character aggregate limit, cancellation, saved request audits and the explicit offline alternative for assignment reviews.
+
+The updated Learning screen has Overview, Subjects and Assignments destinations. The assignment dashboard filters by subject, shows a selectable calendar and upcoming deadlines, and derives progress counts from saved records. Assignment editing uses Details, Questions, Feedback and Review stages. New metadata and five guided reflection answers decode safely when absent in older records. Guided reflection is a separate opt-in source. Skipping feedback preserves existing marks and comments; confirming an assignment never automatically runs analysis.
+
+For synthetic device verification:
+
+1. Create and reopen a subject description. Create an assignment through all four stages, with a brief, work, guided and all-in-one reflection, weighting, score and maximum marks. Verify the Review values, save, reopen, and cancel an edit without altering the saved record.
+2. Verify marks, a paired contextual offline report and linked-goal completion. Inspect Assignments, subject filtering, calendar, the assignment list and Progress.
+3. Open the mentor, edit optional source text, cancel source changes and start a new conversation. Check that merely reviewing context produces no answer and that a fresh conversation has no selected context.
+4. On an eligible device, explicitly approve two synthetic turns with the actual Apple model. Check saved prompt/source/history boundaries, persistence, and conversation deletion.
+5. Use dark mode and the largest Dynamic Type size. Verify the message box, keyboard, approval/context controls and scrollable exact-request sheet. Restore the original appearance after testing.
+
+Design references, downloaded illustration provenance, generated mascot prompt and the Figma quota limitation are recorded in [design notes](DESIGN_UPDATE.md).
+
+
+Final refresh validation:
+
+- All 57 core tests passed, including new-field persistence, decoding older records without the optional metadata, guided-reflection source separation, and weighting validation without changing saved marks.
+- The signed device build passed with Xcode 27.2 for the existing iPhone 16 running iOS 27.2. The bundle identifier and local development team were preserved. There were no Swift compiler warnings or errors; Xcode emitted its expected AppIntents metadata-skip warning. SwiftLint was not installed.
+- The real Apple on-device model completed the two-turn synthetic conversation test twice, most recently in 66.329 seconds. The test checked saved source/history boundaries, reopening the conversation and deletion. The contextual offline engine was tested separately and was never substituted for Apple generation.
+- The complete synthetic assignment wizard, saved metadata/reflections, marks, offline advice, linked goals, subject filters, calendar and progress flow passed in 177.960 seconds.
+- After the final white Scottish terrier asset and animation change, consent/reset passed in 33.682 seconds and the dark-mode, largest-Dynamic-Type composer check passed in 28.686 seconds. These were targeted reruns; the Apple-generation and assignment regressions passed before the mascot-only change.
+- Astra and both existing coding agents reviewed the mascot's Reduce Motion, active-scene and visibility guards. The welcome animation pauses under request sheets or alerts; small chat avatars stay still. Reduce Motion behavior was verified in code review, not by changing the phone's system setting. Final light and dark screenshots were visually reviewed.
+- All UI tests used the separate synthetic store. The final app was installed as an update and launched with no test arguments. The normal data file matched its immediate pre-install backup byte-for-byte, preserving existing subjects, assignments, uploads and conversations.
+- A pre-existing runtime invalid-frame diagnostic and a partial device-diagnostics collection warning appeared during testing without a failing final assertion or observed UI failure. No blocking review findings remain.

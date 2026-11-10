@@ -21,8 +21,7 @@ struct HomeScreen: View {
   private var assignments: [Assignment] { app.data.assignments.filter { !$0.isDemo } }
   private var subjects: [Subject] { app.data.subjects.filter { !$0.isDemo } }
   private var reflected: Int {
-    assignments.filter { !$0.reflection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-      .count
+    assignments.filter(\.hasReflection).count
   }
   private var goals: [LearningGoal] {
     app.data.goals.filter { !$0.isDemo }.sorted {

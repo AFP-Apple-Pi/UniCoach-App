@@ -84,6 +84,9 @@ import Observation
     guard data.subjects.contains(where: { $0.id == assignment.subjectID }) else {
       throw UniCoachError.invalidRelationship
     }
+    if let weighting = assignment.weighting, !weighting.isFinite || weighting < 0 || weighting > 100 {
+      throw UniCoachError.invalidGrade
+    }
     switch (assignment.score, assignment.outOf) {
     case (nil, nil): break
     case (nil, let maximum?) where maximum.isFinite && maximum > 0: break
@@ -271,7 +274,7 @@ import Observation
         "subject:\(s.id.uuidString)", "Subject overview",
         [
           "Code: \(s.code)", "Subject: \(s.name)", "Credits: \(s.credits)", "Tutor: \(s.tutor)",
-        ].joined(separator: "\n"), record(s))
+        ].joined(separator: "\n") + (s.description.isEmpty ? "" : "\nDescription: \(s.description)"), record(s))
     }
     let assignments = selected.map { [$0] } ?? (assignmentID == nil ? data.assignments : [])
     for a in assignments {
@@ -279,6 +282,12 @@ import Observation
       add("assignment:\(a.id.uuidString):brief", "Assignment brief", a.brief, record(a))
       add("assignment:\(a.id.uuidString):feedback", "Tutor feedback", a.tutorFeedback, record(a))
       add("assignment:\(a.id.uuidString):reflection", "Reflection", a.reflection, record(a))
+      let guided = [("Current stage and progress", a.currentStage), ("Approach and methodology", a.approach),
+        ("Challenges and roadblocks", a.challenges), ("Collaboration and team dynamic", a.collaboration),
+        ("Rubric and quality self-assessment", a.rubric)].filter {
+          !$0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.map { "\($0.0):\n\($0.1)" }.joined(separator: "\n\n")
+      add("assignment:\(a.id.uuidString):guided-reflection", "Guided reflection", guided, record(a))
     }
     for g in data.goals
     where selected == nil || g.subjectID == nil || g.subjectID == selected?.subjectID {

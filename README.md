@@ -14,9 +14,9 @@ For updates to an app already installed on a physical device, preserve its exist
 
 ## AI Mentor
 
-Open the AI Mentor tab and choose **New conversation**. Enter a study question or edit a starter. Optionally select private context, review and redact its exact text, enable Apple on-device AI for this request, and tap **Approve and ask**. The answer opens a conversation with a reply box, so you can answer the mentor's follow-up questions.
+Open the AI Mentor tab and choose **New conversation**. An animated white Scottish terrier welcomes you to a chat with a persistent message box. The mascot remains still when Reduce Motion is enabled. Enter a study question or edit a starter. Optionally tap **Add context**, select and redact the exact text, and choose **Use selected text**. Tap **Approve & send** to approve Apple on-device AI for that request. Reviewing context alone never sends anything.
 
-Type your reply and tap **Approve conversation and send**. That action approves the visible conversation messages and your reply for Apple on-device processing. Expand **Review exact conversation history** to inspect the transcript. Earlier private source snapshots are not automatically reused, although previous messages may quote or discuss them. To select different private source material, start a new conversation.
+Continue in the same message box and tap **Approve & send** for each reply. That action approves the visible conversation, new message and any newly selected text for Apple on-device processing. Expand **Review exact conversation history** to inspect the transcript. Earlier private source snapshots are not automatically reused, although previous messages may quote or discuss them. Add context explicitly for any turn; source selection resets after every attempt. At accessibility text sizes, the compact composer labels the action **Approve** and provides a **Review request** information button for the full message, history, sources and processing explanation.
 
 The question, selected source text and approved conversation history together can contain up to 50,000 characters. Requests that fit the device model run directly. Longer requests are processed in sections on the device, then combined through summaries before the final answer. Every approved part is processed, but summaries can miss details. Progress and cancellation remain available, and the full approved text and actual processing steps are retained for inspection. Nothing is silently cut off.
 
@@ -34,7 +34,9 @@ Run `swift test` for core tests. For manual verification, use only synthetic dat
 
 ## Design and learning logic
 
-Home, Learning Overview and Subjects follow the supplied UniCoach Figma design, with local illustrations, icons and licensed Inter typography. Phone layouts stack the desktop cards and retain native navigation and accessible controls. Dashboard values come from saved records.
+Home, Learning Overview, Subjects and the assignment dashboard follow the updated UniCoach Figma design, with bundled illustrations, a mentor mascot and licensed Inter typography. Phone layouts stack the desktop cards and retain native navigation and accessible controls. Dashboard values come from saved records. See [design references and asset provenance](Docs/DESIGN_UPDATE.md).
+
+The Assignments view supports subject filtering, a calendar, upcoming deadlines and completion counts. Assignment creation and editing use Details, Questions, Feedback and Review stages. Optional fields include collaboration type, format, target grade, weighting and five guided reflections. Weighting is recorded separately from actual score and available marks. Existing records remain readable without new fields. Skipping feedback preserves existing feedback and marks; saving an assignment never starts AI analysis.
 
 The on-device backend migrates earlier data into schema version 1 while preserving historical reports. Learning goals unify profile goals, subject goals and saved focuses; new report next steps can become linked goals. Assignments use earned and available marks, with weighted subject totals, optional semesters and chronological grade charts. A known maximum without a score remains ungraded. New coaching reports contain Keep doing, Improve and Next step, with checked tutor quotes and explicit engine selection.
 

@@ -133,6 +133,16 @@ struct ProgressScreen: View {
   var body: some View {
     List {
       Section {
+        VStack(alignment: .leading, spacing: 12) {
+          Text("Learning pathway status").font(.custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
+          Text("Your entered marks, goals and reflections.").font(.caption).foregroundStyle(.secondary)
+          HStack(spacing: 10) {
+            StatCard(title: "Goals completed", value: "\(goals.filter(\.isCompleted).count)", symbol: "GoalIcon", color: Color(red: 0.85, green: 0.92, blue: 0.89))
+            StatCard(title: "Graded assignments", value: "\(allGrades.count)", symbol: "BookIcon", color: Color(red: 0.89, green: 0.85, blue: 0.93))
+          }
+        }.padding(.vertical, 4)
+      }.listRowBackground(Color.clear)
+      Section {
         Picker("Subject", selection: $selectedSubject) {
           Text("All subjects").tag(Optional<UUID>.none)
           ForEach(subjects) { subject in Text(subject.name).tag(Optional(subject.id)) }
@@ -148,7 +158,7 @@ struct ProgressScreen: View {
         LabeledContent(
           "Reflections",
           value:
-            "\(relevant.filter { !$0.reflection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) of \(relevant.count)"
+            "\(relevant.filter(\.hasReflection).count) of \(relevant.count)"
         )
       }
       ForEach(groups, id: \.self) { semester in

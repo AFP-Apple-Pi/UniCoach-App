@@ -99,32 +99,66 @@ private enum MentorSession: Hashable, Identifiable {
 private struct MentorSessionView: View {
   @Environment(AppState.self) private var app
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
   @State private var conversationID: UUID?
+  @State private var draft = ConsentDraft(purpose: .mentorQuestion)
   @State private var request = MentorQuestionRequest()
+  @State private var activeSheet: ChatSheet?
+  @State private var availabilityRevision = 0
+
+  private enum ChatSheet: String, Identifiable {
+    case sources, requestDetails
+    var id: Self { self }
+  }
 
   init(conversationID: UUID?) {
     _conversationID = State(initialValue: conversationID)
   }
 
   var body: some View {
+    let history = conversationID.flatMap { try? app.store.conversationSnapshot(id: $0) }
+    let answers = conversationID.map { app.store.conversationAnswers(id: $0) } ?? []
+    let characterCount = draft.question.count + (history?.transcript.count ?? 0)
+      + draft.selectedSources.reduce(0) { $0 + $1.text.count }
+    let limit = UniCoachStore.contextCharacterLimit
+    let limitExceeded = characterCount > limit || (history?.transcript.count ?? 0) >= limit
+    let conversationUnavailable = conversationID != nil && history == nil
     NavigationStack {
-      Group {
-        if let conversationID {
-          MentorConversationView(conversationID: conversationID, request: request) {
-            self.conversationID = nil
-          }
-        } else {
-          MentorQuestionView(request: request) { answer in
-            conversationID = answer.threadID
-          }
-        }
+      MentorChatTranscript(
+        answers: answers, history: history, conversationUnavailable: conversationUnavailable,
+        pendingQuestion: request.running ? draft.question : nil,
+        progress: request.processingProgress,
+        animateWelcomeMascot: activeSheet == nil && request.message == nil,
+        onStarter: { draft.question = $0 })
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        MentorChatComposer(
+          message: $draft.question, sourceCount: draft.selectedSources.count, hasHistory: history != nil,
+          limitExceeded: limitExceeded, conversationUnavailable: conversationUnavailable,
+          running: request.running, availabilityMessage: modelAvailable() ? nil : modelAvailability(),
+          availabilityRevision: availabilityRevision,
+          onSources: { activeSheet = .sources },
+          onReview: { activeSheet = .requestDetails },
+          onApprove: { send(approving: history) },
+          onCancel: { request.cancel(in: app.store) })
       }
+      .background(canvasColor)
+      .navigationTitle("Conversation")
+      .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Close") {
             request.cancel(in: app.store)
             dismiss()
           }
+        }
+        ToolbarItem(placement: .primaryAction) {
+          Button("New conversation", systemImage: "square.and.pencil") {
+            conversationID = nil
+            draft = ConsentDraft(purpose: .mentorQuestion)
+          }
+          .labelStyle(.iconOnly)
+          .accessibilityIdentifier("conversation.new")
+          .disabled(request.running)
         }
       }
       .navigationDestination(for: UUID.self) { id in
@@ -135,7 +169,18 @@ private struct MentorSessionView: View {
         }
       }
     }
+    .sheet(item: $activeSheet) { sheet in
+      switch sheet {
+      case .sources:
+        MentorContextSheet(draft: draft) { reviewed in draft = reviewed }
+      case .requestDetails:
+        MentorRequestDetailsSheet(draft: draft, history: history)
+      }
+    }
     .interactiveDismissDisabled(request.running)
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .active { availabilityRevision += 1 }
+    }
     .onDisappear { request.cancel(in: app.store) }
     .alert("Mentor", isPresented: Binding(
       get: { request.message != nil }, set: { if !$0 { request.message = nil } }
@@ -143,21 +188,528 @@ private struct MentorSessionView: View {
       Button("OK") { request.message = nil }
     } message: { Text(request.message ?? "") }
   }
+
+  private func send(approving history: MentorConversationSnapshot?) {
+    guard !request.running, modelAvailable(), conversationID == nil || history != nil else { return }
+    var approvedDraft = draft
+    approvedDraft.engine = .appleOnDevice
+    approvedDraft.conversation = history
+    // The message can be retried, but private sources need fresh selection after every attempt.
+    draft = ConsentDraft(question: draft.question, purpose: .mentorQuestion)
+    request.start(draft: approvedDraft, in: app.store) { answer in
+      conversationID = answer.threadID
+      draft = ConsentDraft(purpose: .mentorQuestion)
+    }
+  }
 }
 
-private struct MentorQuestionView: View {
-  @Environment(AppState.self) private var app
+private struct MentorChatTranscript: View {
+  let answers: [MentorAnswer]
+  let history: MentorConversationSnapshot?
+  let conversationUnavailable: Bool
+  let pendingQuestion: String?
+  let progress: String?
+  let animateWelcomeMascot: Bool
+  let onStarter: (String) -> Void
+  @State private var scrollTarget: ScrollTarget?
+
+  private enum ScrollTarget: Hashable {
+    case turn(UUID)
+    case pending
+  }
+
+  var body: some View {
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 16) {
+        if conversationUnavailable {
+          ContentUnavailableView("Conversation unavailable", systemImage: "bubble.left")
+        } else if answers.isEmpty && pendingQuestion == nil {
+          MentorChatWelcome(animateMascot: animateWelcomeMascot, onStarter: onStarter)
+        }
+        ForEach(Array(answers.enumerated()), id: \.element.id) { index, answer in
+          MentorConversationTurnView(answer: answer, index: index)
+            .disabled(pendingQuestion != nil)
+            .id(ScrollTarget.turn(answer.id))
+        }
+        if let pendingQuestion {
+          VStack(spacing: 12) {
+            MentorUserBubble(question: pendingQuestion, identifier: "conversation.pending")
+            HStack(alignment: .top, spacing: 10) {
+              MentorMascotView(placement: .avatar)
+              ProgressView(progress ?? "Preparing your request…")
+                .font(.subheadline)
+                .padding(12)
+                .background(.background, in: .rect(cornerRadius: 18))
+              Spacer(minLength: 24)
+            }
+          }
+          .id(ScrollTarget.pending)
+        }
+        if let history {
+          DisclosureGroup("Review exact conversation history") {
+            MentorScrollableSnapshot(text: history.transcript, identifier: "conversation.history")
+          }
+          .font(.footnote)
+        }
+      }
+      .scrollTargetLayout()
+      .padding()
+      .frame(maxWidth: 760)
+      .frame(maxWidth: .infinity)
+    }
+    .scrollPosition(id: $scrollTarget, anchor: .top)
+    .scrollDismissesKeyboard(.interactively)
+    .accessibilityIdentifier("conversation.transcript")
+    .onChange(of: answers.last?.id, initial: true) { _, id in
+      scrollTarget = id.map(ScrollTarget.turn)
+    }
+    .onChange(of: pendingQuestion != nil) { _, pending in
+      if pending { scrollTarget = .pending }
+    }
+  }
+}
+
+private struct MentorChatWelcome: View {
+  let animateMascot: Bool
+  let onStarter: (String) -> Void
+  private let starters = ["How can I plan my study time?", "How can I improve my next assignment?"]
+
+  var body: some View {
+    VStack(spacing: 12) {
+      MentorMascotView(placement: .welcome, allowsMotion: animateMascot)
+      Text("How can I help you learn?")
+        .font(.custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
+        .foregroundStyle(teal)
+        .accessibilityAddTraits(.isHeader)
+      Text("Ask a study question, work through feedback, or plan your next step.")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+      ForEach(Array(starters.enumerated()), id: \.offset) { index, starter in
+        Button(starter) { onStarter(starter) }
+          .buttonStyle(.bordered)
+          .accessibilityIdentifier(index == 0 ? "question.starter" : "question.starter.assignment")
+      }
+    }
+    .multilineTextAlignment(.center)
+    .frame(maxWidth: .infinity)
+    .padding(20)
+    .background(lavender, in: .rect(cornerRadius: 24))
+  }
+}
+
+private struct MentorMascotView: View {
+  enum Placement { case welcome, avatar }
+
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.scenePhase) private var scenePhase
+  @ScaledMetric(relativeTo: .body) private var avatarSize: CGFloat = 36
+  @State private var visible = false
+
+  let placement: Placement
+  var allowsMotion = false
+
+  var body: some View {
+    let image = Image("MentorMascot")
+      .resizable()
+      .scaledToFit()
+      .frame(
+        width: placement == .avatar ? avatarSize : nil,
+        height: placement == .avatar ? avatarSize : 108)
+      .accessibilityHidden(true)
+    let welcome = ZStack {
+      if allowsMotion && visible && scenePhase == .active && !reduceMotion {
+        image.phaseAnimator([false, true]) { mascot, lifted in
+          mascot
+            .rotationEffect(.degrees(lifted ? 2 : 0), anchor: .bottom)
+            .offset(y: lifted ? -4 : 0)
+        } animation: { _ in .easeInOut(duration: 2) }
+      } else {
+        image
+      }
+    }
+
+    if placement == .avatar {
+      image.background(lavender, in: .circle)
+    } else if #available(iOS 18.0, *) {
+      welcome.onScrollVisibilityChange(threshold: 0.5) { visible = $0 }
+    } else {
+      welcome
+        .onAppear { visible = true }
+        .onDisappear { visible = false }
+    }
+  }
+}
+
+private struct MentorUserBubble: View {
+  let question: String
+  let identifier: String
+
+  var body: some View {
+    HStack {
+      Spacer(minLength: 40)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("You").font(.caption).foregroundStyle(.secondary)
+        MentorSnapshotText(title: "Show full question", text: question, identifier: identifier)
+      }
+      .padding(12)
+      .background(lavender, in: .rect(cornerRadius: 18))
+    }
+  }
+}
+
+private struct MentorConversationTurnView: View {
+  let answer: MentorAnswer
+  let index: Int
+
+  var body: some View {
+    VStack(spacing: 12) {
+      MentorUserBubble(question: answer.question, identifier: "conversation.question.\(index)")
+      HStack(alignment: .top, spacing: 10) {
+        MentorMascotView(placement: .avatar)
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Mentor").font(.caption).foregroundStyle(.secondary)
+          Text(answer.answer)
+            .textSelection(.enabled)
+            .accessibilityIdentifier("conversation.answer.\(index)")
+          NavigationLink("Request details", value: answer.id)
+            .font(.footnote)
+            .accessibilityIdentifier("conversation.request.\(index)")
+        }
+        .padding(12)
+        .background(.background, in: .rect(cornerRadius: 18))
+        Spacer(minLength: 24)
+      }
+    }
+  }
+}
+
+private struct MentorChatComposer: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Binding var message: String
+  @FocusState private var focused: Bool
+  let sourceCount: Int
+  let hasHistory: Bool
+  let limitExceeded: Bool
+  let conversationUnavailable: Bool
+  let running: Bool
+  let availabilityMessage: String?
+  let availabilityRevision: Int
+  let onSources: () -> Void
+  let onReview: () -> Void
+  let onApprove: () -> Void
+  let onCancel: () -> Void
+
+  private var sourceLabel: String {
+    if sourceCount == 0 { return "Add context" }
+    if sourceCount == 1 { return "1 source selected" }
+    return "\(sourceCount) sources selected"
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField("Message your mentor", text: $message, axis: .vertical)
+        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 1...2 : 1...4)
+        .focused($focused)
+        .disabled(running || conversationUnavailable)
+        .padding(12)
+        .background(.background, in: .rect(cornerRadius: 16))
+        .accessibilityIdentifier("conversation.input")
+      if dynamicTypeSize.isAccessibilitySize {
+        MentorCompactComposerActions(
+          sourceLabel: sourceLabel, sourceCount: sourceCount, hasHistory: hasHistory,
+          conversationUnavailable: conversationUnavailable, running: running,
+          approveDisabled: approveDisabled, onSources: openSources, onReview: openReview,
+          onApprove: approve, onCancel: onCancel)
+      } else {
+        ViewThatFits(in: .horizontal) {
+          HStack { MentorComposerActions(
+            sourceLabel: sourceLabel, disabled: conversationUnavailable, running: running,
+            approveDisabled: approveDisabled, onSources: openSources, onApprove: approve, onCancel: onCancel) }
+          VStack(alignment: .leading) { MentorComposerActions(
+            sourceLabel: sourceLabel, disabled: conversationUnavailable, running: running,
+            approveDisabled: approveDisabled, onSources: openSources, onApprove: approve, onCancel: onCancel) }
+        }
+        Text(mentorRequestDisclosure(hasHistory: hasHistory))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("conversation.disclosure")
+        Text("Large requests may use summaries that omit details.")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+      if limitExceeded {
+        Text("Keep this request within \(UniCoachStore.contextCharacterLimit.formatted()) characters. Shorten the message or context, or start a new conversation.")
+          .font(.caption)
+          .accessibilityIdentifier("conversation.limit")
+      }
+      if let availabilityMessage {
+        Text(availabilityMessage)
+          .font(.caption)
+          .id(availabilityRevision)
+          .accessibilityIdentifier("conversation.availability")
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: 760)
+    .frame(maxWidth: .infinity)
+    .background(.regularMaterial)
+    .overlay(alignment: .top) { Divider() }
+    .toolbar {
+      ToolbarItemGroup(placement: .keyboard) {
+        Spacer()
+        Button("Done") { focused = false }.accessibilityIdentifier("conversation.keyboardDone")
+      }
+    }
+  }
+
+  private var approveDisabled: Bool {
+    conversationUnavailable || limitExceeded || availabilityMessage != nil
+      || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  private func openSources() {
+    focused = false
+    onSources()
+  }
+
+  private func openReview() {
+    focused = false
+    onReview()
+  }
+
+  private func approve() {
+    focused = false
+    onApprove()
+  }
+}
+
+private struct MentorComposerActions: View {
+  let sourceLabel: String
+  let disabled: Bool
+  let running: Bool
+  let approveDisabled: Bool
+  let onSources: () -> Void
+  let onApprove: () -> Void
+  let onCancel: () -> Void
+
+  var body: some View {
+    Button(sourceLabel, systemImage: "paperclip", action: onSources)
+      .buttonStyle(.bordered)
+      .accessibilityIdentifier("conversation.sources")
+      .disabled(disabled || running)
+    if running {
+      Button("Cancel request", systemImage: "stop.fill", action: onCancel)
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("conversation.cancel")
+    } else {
+      Button("Approve & send", systemImage: "arrow.up", action: onApprove)
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel("Approve and send to Apple on-device AI")
+        .accessibilityIdentifier("conversation.send")
+        .disabled(approveDisabled)
+    }
+  }
+}
+
+private struct MentorCompactComposerActions: View {
+  @Environment(\.colorScheme) private var colorScheme
+  let sourceLabel: String
+  let sourceCount: Int
+  let hasHistory: Bool
+  let conversationUnavailable: Bool
+  let running: Bool
+  let approveDisabled: Bool
+  let onSources: () -> Void
+  let onReview: () -> Void
+  let onApprove: () -> Void
+  let onCancel: () -> Void
+
+  private var scope: String {
+    var parts = ["message"]
+    if hasHistory { parts.append("chat") }
+    if sourceCount > 0 {
+      parts.append(sourceCount == 1 ? "1 source" : "\(sourceCount) sources")
+    }
+    return "Apple on-device AI · " + parts.joined(separator: ", ")
+  }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      MentorCompactIconButton(label: sourceLabel, symbol: "paperclip", action: onSources)
+        .accessibilityIdentifier("conversation.sources")
+        .disabled(conversationUnavailable || running)
+      MentorCompactIconButton(label: "Review request", symbol: "info.circle", action: onReview)
+        .accessibilityIdentifier("conversation.reviewRequest")
+        .disabled(running)
+      Spacer(minLength: 0)
+      if running {
+        Button("Cancel", systemImage: "stop.fill", action: onCancel)
+          .buttonStyle(.bordered)
+          .accessibilityLabel("Cancel request")
+          .accessibilityIdentifier("conversation.cancel")
+      } else {
+        Button(action: onApprove) {
+          Text("Approve")
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(colorScheme == .dark ? Color(red: 0.09, green: 0.24, blue: 0.20) : .white)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel("Approve and send to Apple on-device AI")
+        .accessibilityIdentifier("conversation.send")
+        .disabled(approveDisabled)
+        .layoutPriority(1)
+      }
+    }
+    Text(scope)
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+      .accessibilityIdentifier("conversation.disclosure")
+  }
+}
+
+private struct MentorCompactIconButton: View {
+  let label: String
+  let symbol: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: symbol)
+        .font(.system(size: 20))
+        .frame(width: 44, height: 44)
+        .background(lavender, in: .circle)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(label)
+  }
+}
+
+private struct MentorRequestDetailsSheet: View {
+  @Environment(\.dismiss) private var dismiss
+  let draft: ConsentDraft
+  let history: MentorConversationSnapshot?
+
+  var body: some View {
+    NavigationStack {
+      List {
+        Section("How this request is processed") {
+          Text(mentorRequestDisclosure(hasHistory: history != nil))
+          MentorLargeContextNotice()
+        }
+        Section("Message") {
+          MentorSnapshotText(
+            title: "Show full message", text: draft.question.isEmpty ? "No message entered." : draft.question,
+            identifier: "conversation.review.message")
+        }
+        Section("Conversation history") {
+          if let history {
+            MentorSnapshotText(
+              title: "Show exact history", text: history.transcript,
+              identifier: "conversation.review.history")
+          } else {
+            Text("No prior messages.")
+          }
+        }
+        Section("Selected source text") {
+          if draft.selectedSources.isEmpty { Text("No private context selected.") }
+          ForEach(draft.selectedSources) { source in
+            VStack(alignment: .leading, spacing: 8) {
+              Text(source.title).font(.headline)
+              MentorSnapshotText(
+                title: "Show approved text", text: source.text,
+                identifier: "conversation.review.source." + source.id)
+            }
+          }
+        }
+      }
+      .navigationTitle("Review request")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+      }
+    }
+  }
+}
+
+private func mentorRequestDisclosure(hasHistory: Bool) -> String {
+  if hasHistory {
+    return "Apple on-device AI uses this message, the conversation above and any selected text. Earlier private source snapshots are excluded. Visible messages may repeat details from them."
+  }
+  return "Apple on-device AI uses this message and any selected text."
+}
+
+private struct MentorContextSheet: View {
+  @Environment(AppState.self) private var app
+  @Environment(\.dismiss) private var dismiss
   @ScaledMetric(relativeTo: .body) private var approvedTextHeight: CGFloat = 140
-  @State private var availabilityRevision = 0
-  @State private var draft = ConsentDraft(purpose: .mentorQuestion)
-  @FocusState private var focusedField: String?
-  @State private var selectedApple = false
+  @State private var draft: ConsentDraft
+  @FocusState private var editingSource: String?
+  let onUse: (ConsentDraft) -> Void
 
-  let request: MentorQuestionRequest
-  let onAnswer: (MentorAnswer) -> Void
+  init(draft: ConsentDraft, onUse: @escaping (ConsentDraft) -> Void) {
+    _draft = State(initialValue: draft)
+    self.onUse = onUse
+  }
 
-  private var running: Bool { request.running }
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Choose private context") {
+          Text("Select only the text you want Apple on-device AI to use for this request.")
+            .font(.caption).foregroundStyle(.secondary)
+          ForEach(app.store.contextSources()) { source in
+            let title = sourceTitle(source)
+            Toggle(title, isOn: Binding(
+              get: { draft.selectedSources.contains { $0.id == source.id } },
+              set: { selected in
+                var reviewedSource = source
+                reviewedSource.title = title
+                draft.setSelected(selected, source: reviewedSource)
+              }
+            ))
+            .accessibilityIdentifier("question.source." + source.id)
+          }
+        }
+        Section("Review selected text") {
+          if draft.selectedSources.isEmpty {
+            Text("No private context selected.").foregroundStyle(.secondary)
+          }
+          ForEach(draft.selectedSources) { source in
+            VStack(alignment: .leading) {
+              Text(source.title).font(.headline)
+              TextEditor(text: Binding(
+                get: { draft.selectedSources.first { $0.id == source.id }?.text ?? "" },
+                set: { draft.setText($0, sourceID: source.id) }
+              ))
+              .focused($editingSource, equals: source.id)
+              .accessibilityLabel("Approved text for " + source.title)
+              .frame(height: approvedTextHeight)
+            }
+          }
+        }
+      }
+      .scrollDismissesKeyboard(.interactively)
+      .navigationTitle("Add context")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") { dismiss() }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Use selected text") {
+            onUse(draft)
+            dismiss()
+          }
+          .accessibilityIdentifier("conversation.useSources")
+          .disabled(draft.selectedSources.contains { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        }
+        ToolbarItemGroup(placement: .keyboard) {
+          Spacer()
+          Button("Done") { editingSource = nil }.accessibilityIdentifier("question.keyboardDone")
+        }
+      }
+    }
+  }
 
   private func sourceTitle(_ source: ContextSource) -> String {
     if let assignment = app.data.assignments.first(where: { source.id.contains($0.id.uuidString) }) {
@@ -171,269 +723,6 @@ private struct MentorQuestionView: View {
       return "\(goal.title): \(source.title)"
     }
     return source.title
-  }
-
-  var body: some View {
-    Form {
-      Section("1. Your question") {
-        TextField("What would you like help with?", text: $draft.question, axis: .vertical)
-          .lineLimit(2...6)
-          .focused($focusedField, equals: "question")
-          .accessibilityIdentifier("question.text")
-        Text("Try a starter, then edit it to make it your own.")
-          .font(.caption).foregroundStyle(.secondary)
-        Button("How can I plan my study time?") {
-          draft.question = "How can I plan my study time?"
-        }.accessibilityIdentifier("question.starter")
-        Button("How can I improve my next assignment?") {
-          draft.question = "How can I improve my next assignment?"
-        }
-      }.disabled(running)
-      Section("2. Optional private context") {
-        Text("Only your question and selected text are used. Apple processes this request on device, with no prior conversation history.")
-          .font(.caption).foregroundStyle(.secondary)
-        Text("Nothing is selected for you. Select only what you want to share for this request.")
-          .font(.caption).foregroundStyle(.secondary)
-        ForEach(app.store.contextSources()) { source in
-          Toggle(sourceTitle(source), isOn: Binding(
-            get: { draft.selectedSources.contains { $0.id == source.id } },
-            set: { selected in
-              var approvedSource = source
-              approvedSource.title = sourceTitle(source)
-              draft.setSelected(selected, source: approvedSource)
-            }
-          )).accessibilityIdentifier("question.source." + source.id)
-        }
-      }.disabled(running)
-      Section("3. Review exact request") {
-        Text("Question").font(.headline)
-        MentorSnapshotText(
-          title: "Show full question", text: draft.question.isEmpty ? "Enter a question above." : draft.question,
-          identifier: "question.preview")
-        if draft.selectedSources.isEmpty {
-          Text("No private context selected.").foregroundStyle(.secondary)
-        }
-        ForEach(draft.selectedSources) { source in
-          VStack(alignment: .leading) {
-            Text(source.title).font(.headline)
-            TextEditor(text: Binding(
-              get: { draft.selectedSources.first { $0.id == source.id }?.text ?? "" },
-              set: { draft.setText($0, sourceID: source.id) }
-            ))
-            .focused($focusedField, equals: source.id)
-            .accessibilityLabel("Approved text for " + source.title)
-            .frame(height: approvedTextHeight)
-          }
-        }
-        Text("Your question and selected text are limited to \(UniCoachStore.contextCharacterLimit.formatted()) characters.")
-          .font(.caption).foregroundStyle(.secondary)
-      }.disabled(running)
-      Section("4. Choose Apple on-device AI") {
-        Text(modelAvailability()).font(.subheadline).foregroundStyle(.secondary)
-          .id(availabilityRevision).accessibilityIdentifier("question.availability")
-        Toggle("Use Apple on-device AI for this request", isOn: $selectedApple)
-          .accessibilityIdentifier("question.apple")
-        Text("The answer may be inaccurate. Check it before relying on it.")
-          .font(.caption).foregroundStyle(.secondary)
-        MentorLargeContextNotice()
-      }.disabled(running)
-      Section {
-        if let progress = request.processingProgress, running { ProgressView(progress) }
-        Button(running ? "Working..." : "Approve and ask") { start() }
-          .accessibilityIdentifier("question.approve")
-          .disabled(running || !selectedApple || !modelAvailable()
-            || draft.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        if running {
-          Button("Cancel request", role: .cancel) {
-            request.cancel(in: app.store)
-            draft = ConsentDraft(purpose: .mentorQuestion)
-          }
-        }
-      }
-    }
-    .navigationTitle("Ask your mentor")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItemGroup(placement: .keyboard) {
-        Spacer()
-        Button("Done") { focusedField = nil }.accessibilityIdentifier("question.keyboardDone")
-      }
-    }
-    .onChange(of: scenePhase) { _, phase in
-      if phase == .active { availabilityRevision += 1 }
-    }
-  }
-
-  private func start() {
-    guard selectedApple, modelAvailable() else { return }
-    var approvedDraft = draft
-    approvedDraft.engine = .appleOnDevice
-    selectedApple = false
-    focusedField = nil
-    request.start(draft: approvedDraft, in: app.store, onAnswer: onAnswer)
-  }
-}
-
-private struct MentorConversationView: View {
-  @Environment(AppState.self) private var app
-  @Environment(\.scenePhase) private var scenePhase
-  @State private var availabilityRevision = 0
-  @State private var reply = ""
-  @State private var visibleTurn: UUID?
-
-  let conversationID: UUID
-  let request: MentorQuestionRequest
-  let onNew: () -> Void
-
-  var body: some View {
-    Group {
-      if let history = try? app.store.conversationSnapshot(id: conversationID) {
-        let answers = app.store.conversationAnswers(id: conversationID)
-        ScrollView {
-          LazyVStack(alignment: .leading) {
-            ForEach(Array(answers.enumerated()), id: \.element.id) { index, answer in
-              MentorConversationTurnView(answer: answer, index: index)
-                .disabled(request.running)
-            }
-            DisclosureGroup("Review exact conversation history") {
-              MentorScrollableSnapshot(text: history.transcript, identifier: "conversation.history")
-            }
-          }
-          .scrollTargetLayout()
-          .padding()
-        }
-        .scrollPosition(id: $visibleTurn, anchor: .top)
-        .scrollDismissesKeyboard(.interactively)
-        .accessibilityIdentifier("conversation.transcript")
-        .onChange(of: answers.last?.id, initial: true) { _, id in visibleTurn = id }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-          MentorReplyComposer(
-            reply: $reply, historyLength: history.transcript.count, running: request.running,
-            processingProgress: request.processingProgress, available: modelAvailable(), availabilityMessage: modelAvailability(),
-            availabilityRevision: availabilityRevision,
-            onApprove: { send(approving: history) },
-            onCancel: { request.cancel(in: app.store) })
-        }
-      } else {
-        ContentUnavailableView("Conversation unavailable", systemImage: "bubble.left")
-      }
-    }
-    .navigationTitle("Conversation")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button("New conversation", systemImage: "square.and.pencil", action: onNew)
-          .labelStyle(.iconOnly)
-          .accessibilityIdentifier("conversation.new")
-          .disabled(request.running)
-      }
-    }
-    .onChange(of: scenePhase) { _, phase in
-      if phase == .active { availabilityRevision += 1 }
-    }
-    .onDisappear { request.cancel(in: app.store) }
-  }
-
-  private func send(approving history: MentorConversationSnapshot) {
-    var draft = ConsentDraft(purpose: .mentorQuestion)
-    draft.question = reply
-    draft.engine = .appleOnDevice
-    draft.conversation = history
-    request.start(draft: draft, in: app.store) { _ in reply = "" }
-  }
-}
-
-private struct MentorConversationTurnView: View {
-  let answer: MentorAnswer
-  let index: Int
-
-  var body: some View {
-    VStack(alignment: .leading) {
-      VStack(alignment: .leading) {
-        Text("You").font(.caption).foregroundStyle(.secondary)
-        MentorSnapshotText(
-          title: "Show full question", text: answer.question, identifier: "conversation.question.\(index)")
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding()
-      .background(lavender, in: .rect(cornerRadius: 14))
-      VStack(alignment: .leading) {
-        Text("Mentor").font(.caption).foregroundStyle(.secondary)
-        Text(answer.answer)
-          .textSelection(.enabled)
-          .accessibilityIdentifier("conversation.answer.\(index)")
-        NavigationLink("Request details", value: answer.id)
-          .font(.footnote)
-          .accessibilityIdentifier("conversation.request.\(index)")
-      }
-      .padding()
-    }
-  }
-}
-
-private struct MentorReplyComposer: View {
-  @Binding var reply: String
-  @FocusState private var focused: Bool
-  let historyLength: Int
-  let running: Bool
-  let processingProgress: String?
-  let available: Bool
-  let availabilityMessage: String
-  let availabilityRevision: Int
-  let onApprove: () -> Void
-  let onCancel: () -> Void
-
-  private var limitReached: Bool {
-    let limit = UniCoachStore.contextCharacterLimit
-    return historyLength >= limit || historyLength + reply.count > limit
-  }
-
-  var body: some View {
-    VStack(alignment: .leading) {
-      Divider()
-      TextField("Reply to your mentor", text: $reply, axis: .vertical)
-        .textFieldStyle(.roundedBorder)
-        .lineLimit(1...4)
-        .focused($focused)
-        .disabled(running)
-        .accessibilityIdentifier("conversation.reply")
-      Text("Apple on-device AI uses the messages above and your reply. Earlier private source snapshots are excluded. Visible messages may repeat details from them.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .accessibilityIdentifier("conversation.disclosure")
-      MentorLargeContextNotice()
-      if limitReached {
-        Text("Conversation and reply must fit within \(UniCoachStore.contextCharacterLimit.formatted()) characters. Shorten your reply or start a new conversation to ask without this history.")
-          .font(.caption)
-          .accessibilityIdentifier("conversation.limit")
-      }
-      if !available {
-        Text(availabilityMessage)
-          .font(.caption)
-          .id(availabilityRevision)
-          .accessibilityIdentifier("conversation.availability")
-      }
-      if running {
-        ProgressView(processingProgress ?? "Waiting for your mentor...")
-        Button("Cancel request", role: .cancel, action: onCancel)
-      } else {
-        Button("Approve conversation and send") {
-          focused = false
-          onApprove()
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!available || limitReached || reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .accessibilityIdentifier("conversation.send")
-      }
-    }
-    .padding([.horizontal, .bottom])
-    .background(.regularMaterial)
-    .toolbar {
-      ToolbarItemGroup(placement: .keyboard) {
-        Spacer()
-        Button("Done") { focused = false }.accessibilityIdentifier("conversation.keyboardDone")
-      }
-    }
   }
 }
 

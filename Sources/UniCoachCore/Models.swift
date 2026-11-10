@@ -39,10 +39,11 @@ public struct Subject: Codable, Identifiable, Equatable {
   public var tutor: String, colorHex: String, academicGoal: String
   public var isDemo: Bool
   public var semester: String?
+  public var description: String
   public init(
     id: UUID = UUID(), code: String = "", name: String = "", credits: Double = 0,
     tutor: String = "", colorHex: String = "#6750A4", academicGoal: String = "",
-    isDemo: Bool = false, semester: String? = nil
+    isDemo: Bool = false, semester: String? = nil, description: String = ""
   ) {
     self.id = id
     self.code = code
@@ -53,9 +54,10 @@ public struct Subject: Codable, Identifiable, Equatable {
     self.academicGoal = academicGoal
     self.isDemo = isDemo
     self.semester = semester
+    self.description = description
   }
   private enum CodingKeys: String, CodingKey {
-    case id, code, name, credits, tutor, colorHex, academicGoal, isDemo, semester
+    case id, code, name, credits, tutor, colorHex, academicGoal, isDemo, semester, description
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -68,6 +70,7 @@ public struct Subject: Codable, Identifiable, Equatable {
     academicGoal = try c.decodeIfPresent(String.self, forKey: .academicGoal) ?? ""
     isDemo = try c.decode(Bool.self, forKey: .isDemo)
     semester = try c.decodeIfPresent(String.self, forKey: .semester)
+    description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
   }
   public func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -79,6 +82,7 @@ public struct Subject: Codable, Identifiable, Equatable {
     try c.encode(colorHex, forKey: .colorHex)
     try c.encode(isDemo, forKey: .isDemo)
     try c.encodeIfPresent(semester, forKey: .semester)
+    if !description.isEmpty { try c.encode(description, forKey: .description) }
   }
 }
 public struct Assignment: Codable, Identifiable, Equatable {
@@ -92,6 +96,14 @@ public struct Assignment: Codable, Identifiable, Equatable {
   public var tutorFeedback: String, reflection: String
   public var isDemo: Bool
   public var submittedWork: String
+  public var collaborationType: String, assignmentFormat: String, targetGrade: String
+  public var weighting: Double?
+  public var currentStage: String, approach: String, challenges: String, collaboration: String, rubric: String
+  public var hasReflection: Bool {
+    [reflection, currentStage, approach, challenges, collaboration, rubric].contains {
+      !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+  }
   public var percentage: Double? {
     guard let score, let outOf, outOf > 0 else { return nil }
     return score / outOf * 100
@@ -109,7 +121,10 @@ public struct Assignment: Codable, Identifiable, Equatable {
     id: UUID = UUID(), subjectID: UUID, title: String = "", brief: String = "",
     dueDate: Date? = Date(), grade: Double? = nil, tutorFeedback: String = "",
     reflection: String = "", isDemo: Bool = false, submittedWork: String = "", score: Double? = nil,
-    outOf: Double? = nil, createdAt: Date? = Date()
+    outOf: Double? = nil, createdAt: Date? = Date(), collaborationType: String = "",
+    assignmentFormat: String = "", targetGrade: String = "", weighting: Double? = nil,
+    currentStage: String = "", approach: String = "", challenges: String = "",
+    collaboration: String = "", rubric: String = ""
   ) {
     self.id = id
     self.subjectID = subjectID
@@ -123,10 +138,20 @@ public struct Assignment: Codable, Identifiable, Equatable {
     self.reflection = reflection
     self.isDemo = isDemo
     self.submittedWork = submittedWork
+    self.collaborationType = collaborationType
+    self.assignmentFormat = assignmentFormat
+    self.targetGrade = targetGrade
+    self.weighting = weighting
+    self.currentStage = currentStage
+    self.approach = approach
+    self.challenges = challenges
+    self.collaboration = collaboration
+    self.rubric = rubric
   }
   private enum CodingKeys: String, CodingKey {
     case id, subjectID, title, brief, dueDate, createdAt, grade, score, outOf, tutorFeedback,
-      reflection, isDemo, submittedWork
+      reflection, isDemo, submittedWork, collaborationType, assignmentFormat, targetGrade,
+      weighting, currentStage, approach, challenges, collaboration, rubric
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -143,6 +168,15 @@ public struct Assignment: Codable, Identifiable, Equatable {
     reflection = try c.decode(String.self, forKey: .reflection)
     isDemo = try c.decode(Bool.self, forKey: .isDemo)
     submittedWork = try c.decodeIfPresent(String.self, forKey: .submittedWork) ?? ""
+    collaborationType = try c.decodeIfPresent(String.self, forKey: .collaborationType) ?? ""
+    assignmentFormat = try c.decodeIfPresent(String.self, forKey: .assignmentFormat) ?? ""
+    targetGrade = try c.decodeIfPresent(String.self, forKey: .targetGrade) ?? ""
+    weighting = try c.decodeIfPresent(Double.self, forKey: .weighting)
+    currentStage = try c.decodeIfPresent(String.self, forKey: .currentStage) ?? ""
+    approach = try c.decodeIfPresent(String.self, forKey: .approach) ?? ""
+    challenges = try c.decodeIfPresent(String.self, forKey: .challenges) ?? ""
+    collaboration = try c.decodeIfPresent(String.self, forKey: .collaboration) ?? ""
+    rubric = try c.decodeIfPresent(String.self, forKey: .rubric) ?? ""
   }
   public func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -158,6 +192,15 @@ public struct Assignment: Codable, Identifiable, Equatable {
     try c.encode(reflection, forKey: .reflection)
     try c.encode(isDemo, forKey: .isDemo)
     try c.encode(submittedWork, forKey: .submittedWork)
+    if !collaborationType.isEmpty { try c.encode(collaborationType, forKey: .collaborationType) }
+    if !assignmentFormat.isEmpty { try c.encode(assignmentFormat, forKey: .assignmentFormat) }
+    if !targetGrade.isEmpty { try c.encode(targetGrade, forKey: .targetGrade) }
+    try c.encodeIfPresent(weighting, forKey: .weighting)
+    if !currentStage.isEmpty { try c.encode(currentStage, forKey: .currentStage) }
+    if !approach.isEmpty { try c.encode(approach, forKey: .approach) }
+    if !challenges.isEmpty { try c.encode(challenges, forKey: .challenges) }
+    if !collaboration.isEmpty { try c.encode(collaboration, forKey: .collaboration) }
+    if !rubric.isEmpty { try c.encode(rubric, forKey: .rubric) }
   }
 }
 public struct LearningGoal: Codable, Identifiable, Equatable {

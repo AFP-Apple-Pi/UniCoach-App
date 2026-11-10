@@ -59,18 +59,34 @@ final class UniCoachUITests: XCTestCase {
   }
 
   private func dismissAssignmentKeyboard(in app: XCUIApplication) {
-    let done = app.buttons["assignment.keyboardDone"]
+    _ = dismissKeyboard("assignment.keyboardDone", in: app)
+  }
+
+  private func dismissKeyboard(_ buttonID: String, in app: XCUIApplication) -> Bool {
+    let done = app.buttons[buttonID]
+    let keyboard = app.keyboards.firstMatch
     let ready = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "exists == true AND hittable == true"), object: done)
+      predicate: NSPredicate { _, _ in
+        guard keyboard.exists, done.exists else { return false }
+        let frame = done.frame
+        return !frame.isEmpty && !frame.isInfinite && frame.midX.isFinite && frame.midY.isFinite
+          && app.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+      }, object: nil)
     guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
-      XCTFail("Assignment keyboard Done button not available: \(app.debugDescription)")
-      return
+      XCTFail("Keyboard Done button did not appear on screen: " + buttonID)
+      return false
     }
-    done.tap()
+    // UIKit can report an invalid activation point for the keyboard toolbar during layout.
+    let frame = done.frame
+    let window = app.frame
+    app.coordinate(withNormalizedOffset: CGVector(
+      dx: (frame.midX - window.minX) / window.width,
+      dy: (frame.midY - window.minY) / window.height)).tap()
     let dismissed = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
-    XCTAssertEqual(
-      XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, "Keyboard did not dismiss")
+      predicate: NSPredicate(format: "exists == false"), object: keyboard)
+    let finished = XCTWaiter.wait(for: [dismissed], timeout: 5) == .completed
+    XCTAssertTrue(finished, "Keyboard did not dismiss using " + buttonID)
+    return finished
   }
 
   private func back(_ label: String, in app: XCUIApplication) {
@@ -108,40 +124,60 @@ final class UniCoachUITests: XCTestCase {
     let editSubject = app.buttons["subject.edit"]
     XCTAssertTrue(editSubject.waitForExistence(timeout: 5))
     editSubject.tap()
+    let subjectDescription = "Synthetic subject about community design research."
+    let description = element(app, id: "subject.description")
+    guard reach(description, in: app) else { return }
+    description.tap()
+    description.typeText(subjectDescription)
     enter("Sem 2, 2026", id: "subject.semester", in: app)
     app.buttons["editor.save"].tap()
     XCTAssertTrue(app.staticTexts["Sem 2, 2026"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts[subjectDescription].exists)
 
     let addAssignment = app.buttons["subject.addAssignment"]
     guard reach(addAssignment, in: app) else { return }
     addAssignment.tap()
+    let brief = "Explain how a community project supports wellbeing."
+    let stageAnswer = "I have completed a first draft."
+    let reflection = "I want to make my reasoning easier to follow."
     enter("Synthetic essay", id: "assignment.title", in: app)
+    enter("25", id: "assignment.weighting", in: app)
+    guard enterAssignmentText(brief, label: "Assignment brief", in: app),
+      advanceAssignment(in: app)
+    else { return }
+
+    let guided = app.buttons["Current stage & progress"]
+    guard reach(guided, in: app) else { return }
+    guided.tap()
+    guard enterAssignmentText(stageAnswer, label: "Current stage & progress", in: app) else { return }
+    let allInOne = app.segmentedControls.buttons["All-in-one reflection"]
+    guard reach(allInOne, in: app, up: false) else { return }
+    allInOne.tap()
+    guard enterAssignmentText(reflection, label: "Your reflection", in: app),
+      enterAssignmentText(
+        "Community gardens can improve wellbeing. One study found participants met neighbours more often.",
+        label: "Submitted work", in: app),
+      advanceAssignment(in: app)
+    else { return }
+
+    guard enterAssignmentText(
+      "Your example is clear. You should explain how the evidence supports your claim.",
+      label: "Tutor feedback", in: app)
+    else { return }
     enter("12.35", id: "assignment.score", in: app)
     enter("20", id: "assignment.outOf", in: app)
-    let work = app.textViews["Submitted work"]
-    guard reach(work, in: app) else { return }
-    work.tap()
-    work.typeText(
-      "Community gardens can improve wellbeing. One study found participants met neighbours more often."
-    )
-    dismissAssignmentKeyboard(in: app)
-    let feedback = app.textViews["Tutor feedback"]
-    guard reach(feedback, in: app) else { return }
-    feedback.tap()
-    feedback.typeText(
-      "Your example is clear. You should explain how the evidence supports your claim.")
-    dismissAssignmentKeyboard(in: app)
-    let reflection = app.textViews["Your reflection"]
-    guard reach(reflection, in: app) else { return }
-    reflection.tap()
-    reflection.typeText("I want to make my reasoning easier to follow.")
-    dismissAssignmentKeyboard(in: app)
+    guard advanceAssignment(in: app) else { return }
+    guard reach(app.staticTexts["Review assignment"], in: app, up: false) else { return }
+    attachScreenshot("Assignment wizard review", app: app)
     app.buttons["editor.save"].tap()
+
     guard reach(addAssignment, in: app) else { return }
     addAssignment.tap()
     enter("Second synthetic assignment", id: "assignment.title", in: app)
+    guard advanceAssignment(in: app), advanceAssignment(in: app) else { return }
     enter("35.8", id: "assignment.score", in: app)
     enter("40", id: "assignment.outOf", in: app)
+    guard advanceAssignment(in: app) else { return }
     app.buttons["editor.save"].tap()
     let first = app.staticTexts["Synthetic essay"].firstMatch
     let marks = element(app, id: "subject.marks")
@@ -153,6 +189,23 @@ final class UniCoachUITests: XCTestCase {
 
     guard reach(first, in: app) else { return }
     first.tap()
+    for label in [stageAnswer, reflection, brief] {
+      guard reach(app.staticTexts[label], in: app) else { return }
+    }
+    app.buttons["assignment.actions"].tap()
+    app.buttons["assignment.edit"].tap()
+    let weighting = element(app, id: "assignment.weighting")
+    guard reach(weighting, in: app) else { return }
+    XCTAssertEqual(Double(weighting.value as? String ?? ""), 25)
+    let savedBrief = app.textViews["Assignment brief"]
+    guard reach(savedBrief, in: app) else { return }
+    XCTAssertEqual(savedBrief.value as? String, brief)
+    let title = element(app, id: "assignment.title")
+    guard reach(title, in: app, up: false) else { return }
+    title.tap()
+    title.typeText(" unsaved edit")
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertTrue(app.navigationBars["Synthetic essay"].waitForExistence(timeout: 5))
     let mentor = app.buttons["Open mentor"]
     guard reach(mentor, in: app) else { return }
     mentor.tap()
@@ -218,6 +271,48 @@ final class UniCoachUITests: XCTestCase {
     let subjects = app.segmentedControls.buttons["Subjects"]
     subjects.tap()
     attachScreenshot("Learning Subjects", app: app)
+
+    let assignments = app.segmentedControls.buttons["Assignments"]
+    guard reach(assignments, in: app, up: false) else { return }
+    assignments.tap()
+    let assignmentsBanner = app.staticTexts["Your assignments"]
+    guard reach(assignmentsBanner, in: app) else { return }
+    attachScreenshot("Learning Assignments dashboard", app: app)
+    let subjectFilter = element(app, id: "assignments.subjectFilter")
+    guard reach(subjectFilter, in: app, up: false) else { return }
+    subjectFilter.tap()
+    app.buttons["Synthetic Design"].tap()
+    XCTAssertTrue((subjectFilter.label + " " + (subjectFilter.value as? String ?? "")).contains("Synthetic Design"))
+    guard reach(app.staticTexts["Subject assignments"], in: app) else { return }
+    attachScreenshot("Learning Assignments filtered by subject", app: app)
+    guard reach(app.staticTexts["Academic calendar"], in: app) else { return }
+    XCTAssertTrue(element(app, id: "assignments.calendar").exists)
+    let assignmentRow = app.buttons.matching(NSPredicate(
+      format: "label BEGINSWITH %@ AND label CONTAINS %@ AND label CONTAINS %@",
+      "Synthetic essay,", "Synthetic Design", "Graded")).firstMatch
+    guard reach(app.staticTexts["All assignments (2)"], in: app),
+      reach(assignmentRow, in: app)
+    else { return }
+
+    app.tabBars.buttons["My Progress"].tap()
+    guard reach(app.staticTexts["Learning pathway status"], in: app, up: false) else { return }
+    XCTAssertTrue(app.staticTexts["Graded assignments"].exists)
+    attachScreenshot("Progress learning pathway metrics", app: app)
+  }
+
+  private func enterAssignmentText(_ text: String, label: String, in app: XCUIApplication) -> Bool {
+    let editor = app.textViews[label]
+    guard reach(editor, in: app) else { return false }
+    editor.tap()
+    editor.typeText(text)
+    return dismissKeyboard("assignment.keyboardDone", in: app)
+  }
+
+  private func advanceAssignment(in app: XCUIApplication) -> Bool {
+    let next = app.buttons["assignment.next"]
+    guard reach(next, in: app) else { return false }
+    next.tap()
+    return true
   }
 
   func testMentorQuestionConsentResets() {
@@ -229,46 +324,55 @@ final class UniCoachUITests: XCTestCase {
     continueButton.tap()
     app.tabBars.buttons["AI Mentor"].tap()
     app.buttons["mentor.ask"].tap()
-    let starter = app.buttons["question.starter"]
-    XCTAssertTrue(starter.waitForExistence(timeout: 5))
-    starter.tap()
-    let preview = element(app, id: "question.preview")
-    XCTAssertTrue(preview.label.contains("How can I plan my study time?"))
-    let source = element(app, id: "question.source.progress")
-    chooseSwitch(source, in: app)
+
+    let input = element(app, id: "conversation.input")
+    let send = app.buttons["conversation.send"]
+    let sources = app.buttons["conversation.sources"]
+    let useSources = app.buttons["conversation.useSources"]
+    let progress = element(app, id: "question.source.progress")
     let approved = app.textViews["Approved text for Progress overview"]
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    XCTAssertFalse(send.isEnabled)
+    XCTAssertEqual(sources.label, "Add context")
+    attachScreenshot("Mentor chat welcome", app: app)
+
+    app.buttons["question.starter"].tap()
+    XCTAssertEqual(input.value as? String, "How can I plan my study time?")
+    sources.tap()
+    chooseSwitch(progress, in: app)
     guard reach(approved, in: app) else { return }
     approved.tap()
     approved.typeText(" synthetic edit")
+    guard dismissKeyboard("question.keyboardDone", in: app) else { return }
     XCTAssertTrue((approved.value as? String ?? "").contains("synthetic edit"))
-    attachScreenshot("Mentor question and context", app: app)
-    let done = app.buttons["question.keyboardDone"]
-    XCTAssertTrue(done.waitForExistence(timeout: 5))
-    done.tap()
-    let apple = element(app, id: "question.apple")
-    guard reach(apple, in: app) else { return }
-    XCTAssertEqual(apple.value as? String, "0")
-    let approve = app.buttons["question.approve"]
-    guard reach(approve, in: app) else { return }
-    XCTAssertFalse(approve.isEnabled)
-    guard reach(apple, in: app, up: false) else { return }
-    let nested = apple.switches.firstMatch
-    if nested.exists { nested.tap() } else { apple.tap() }
-    XCTAssertEqual(apple.value as? String, "1")
-    attachScreenshot("Mentor approval", app: app)
+    useSources.tap()
+    XCTAssertEqual(sources.label, "1 source selected")
+    XCTAssertFalse(element(app, id: "conversation.question.0").exists, "Reviewing context must not send a request")
+
+    sources.tap()
+    XCTAssertEqual(progress.value as? String, "1")
+    guard reach(approved, in: app) else { return }
+    approved.tap()
+    approved.typeText(" discard this edit")
+    guard dismissKeyboard("question.keyboardDone", in: app) else { return }
+    app.navigationBars.buttons["Cancel"].tap()
+    sources.tap()
+    guard reach(approved, in: app) else { return }
+    let kept = approved.value as? String ?? ""
+    XCTAssertTrue(kept.contains("synthetic edit"))
+    XCTAssertFalse(kept.contains("discard this edit"))
+    app.navigationBars.buttons["Cancel"].tap()
+
     app.navigationBars.buttons["Close"].tap()
     app.buttons["mentor.ask"].tap()
-    let question = element(app, id: "question.text")
-    XCTAssertTrue(question.waitForExistence(timeout: 5))
-    XCTAssertFalse((question.value as? String ?? "").contains("How can I plan"))
-    guard reach(source, in: app) else { return }
-    XCTAssertEqual(source.value as? String, "0")
-    guard reach(apple, in: app) else { return }
-    XCTAssertEqual(apple.value as? String, "0")
-    guard reach(approve, in: app) else { return }
-    XCTAssertFalse(approve.isEnabled)
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    XCTAssertFalse((input.value as? String ?? "").contains("How can I plan"))
+    XCTAssertFalse(send.isEnabled)
+    XCTAssertEqual(sources.label, "Add context")
+    sources.tap()
+    XCTAssertEqual(progress.value as? String, "0")
+    app.navigationBars.buttons["Cancel"].tap()
   }
-
 
   func testSyntheticAppleConversation() throws {
     let app = XCUIApplication()
@@ -280,45 +384,38 @@ final class UniCoachUITests: XCTestCase {
     app.tabBars.buttons["AI Mentor"].tap()
     app.buttons["mentor.ask"].tap()
 
-    let apple = element(app, id: "question.apple")
-    guard reach(apple, in: app) else { return }
-    let availability = element(app, id: "question.availability")
-    XCTAssertTrue(availability.exists, "Missing model availability")
-    let status = availability.label
-    if status.contains("unavailable") || status.contains("requires") {
-      throw XCTSkip(status)
-    }
-    XCTAssertEqual(status, "Apple on-device model is available.")
+    let input = element(app, id: "conversation.input")
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    let availability = element(app, id: "conversation.availability")
+    if availability.exists { throw XCTSkip(availability.label) }
 
     let firstQuestion = "Can you help me plan my study time? Please ask me one question about my schedule."
-    let questionInput = element(app, id: "question.text")
-    guard reach(questionInput, in: app, up: false) else { return }
-    questionInput.tap()
-    questionInput.typeText(firstQuestion)
-    let questionDone = app.buttons["question.keyboardDone"]
-    XCTAssertTrue(questionDone.waitForExistence(timeout: 5))
-    questionDone.tap()
-    let source = element(app, id: "question.source.progress")
-    chooseSwitch(source, in: app)
+    input.tap()
+    input.typeText(firstQuestion)
+    let send = app.buttons["conversation.send"]
+    XCTAssertTrue(send.isHittable, "The composer stays visible above the keyboard")
+    guard dismissKeyboard("conversation.keyboardDone", in: app) else { return }
+    let sources = app.buttons["conversation.sources"]
+    sources.tap()
+    let progress = element(app, id: "question.source.progress")
+    chooseSwitch(progress, in: app)
     let approved = app.textViews["Approved text for Progress overview"]
     guard reach(approved, in: app) else { return }
     approved.tap()
     let marker = "Synthetic source marker ZEBRA42."
     approved.typeText(" " + marker)
-    questionDone.tap()
-    chooseSwitch(apple, in: app)
-    let approve = app.buttons["question.approve"]
-    guard reach(approve, in: app) else { return }
-    XCTAssertTrue(approve.isEnabled)
-    approve.tap()
+    guard dismissKeyboard("question.keyboardDone", in: app) else { return }
+    app.buttons["conversation.useSources"].tap()
+    XCTAssertEqual(sources.label, "1 source selected")
+    XCTAssertTrue(send.isEnabled)
+    send.tap()
 
     let conversation = app.navigationBars["Conversation"]
-    XCTAssertTrue(conversation.waitForExistence(timeout: 90), "Apple request did not save: \(app.debugDescription)")
     let transcript = app.scrollViews["conversation.transcript"]
-    let send = app.buttons["conversation.send"]
-    XCTAssertTrue(send.exists)
-    XCTAssertFalse(send.isEnabled, "Every reply starts blank and needs a fresh approval")
     let first = element(app, id: "conversation.question.0")
+    XCTAssertTrue(first.waitForExistence(timeout: 90), "Apple request did not save: \(app.debugDescription)")
+    XCTAssertFalse(send.isEnabled)
+    XCTAssertEqual(sources.label, "Add context", "Every request starts with fresh source consent")
     guard reach(first, in: app, scrolling: transcript, up: false) else { return }
     XCTAssertEqual(first.label, firstQuestion)
     attachScreenshot("First saved Apple mentor turn", app: app)
@@ -351,10 +448,8 @@ final class UniCoachUITests: XCTestCase {
     XCTAssertTrue(disclosure.label.contains("Earlier private source snapshots are excluded."))
 
     let reply = "I can study for 30 minutes on weekdays. Can you make the plan fit?"
-    enter(reply, id: "conversation.reply", in: app)
-    let replyDone = app.buttons["conversation.keyboardDone"]
-    XCTAssertTrue(replyDone.waitForExistence(timeout: 5))
-    replyDone.tap()
+    enter(reply, id: "conversation.input", in: app)
+    guard dismissKeyboard("conversation.keyboardDone", in: app) else { return }
     XCTAssertTrue(send.isEnabled)
     send.tap()
     let second = element(app, id: "conversation.question.1")
@@ -390,16 +485,15 @@ final class UniCoachUITests: XCTestCase {
     XCTAssertEqual(first.label, firstQuestion)
 
     app.buttons["conversation.new"].tap()
-    XCTAssertTrue(questionInput.waitForExistence(timeout: 5))
-    XCTAssertFalse((questionInput.value as? String ?? "").contains(firstQuestion))
-    XCTAssertFalse((questionInput.value as? String ?? "").contains(reply))
-    XCTAssertFalse(transcript.exists)
-    guard reach(source, in: app) else { return }
-    XCTAssertEqual(source.value as? String, "0")
-    guard reach(apple, in: app) else { return }
-    XCTAssertEqual(apple.value as? String, "0")
-    guard reach(approve, in: app) else { return }
-    XCTAssertFalse(approve.isEnabled)
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    XCTAssertFalse((input.value as? String ?? "").contains(firstQuestion))
+    XCTAssertFalse((input.value as? String ?? "").contains(reply))
+    XCTAssertFalse(first.exists)
+    XCTAssertFalse(review.exists)
+    XCTAssertFalse(send.isEnabled)
+    sources.tap()
+    XCTAssertEqual(progress.value as? String, "0")
+    app.navigationBars.buttons["Cancel"].tap()
     app.navigationBars.buttons["Close"].tap()
 
     saved.firstMatch.swipeLeft()
@@ -407,6 +501,83 @@ final class UniCoachUITests: XCTestCase {
     app.buttons["Delete conversation"].tap()
     XCTAssertTrue(app.staticTexts["Your saved conversations will appear here."].waitForExistence(timeout: 5))
     XCTAssertEqual(saved.count, 0)
+  }
+
+  func testMentorComposerAccessibility() {
+    continueAfterFailure = false
+    let previousAppearance = XCUIDevice.shared.appearance
+    addTeardownBlock { XCUIDevice.shared.appearance = previousAppearance }
+    XCUIDevice.shared.appearance = .dark
+
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]
+    app.launch()
+    let continueButton = app.buttons["profile.save"]
+    XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+    continueButton.tap()
+    app.tabBars.buttons["AI Mentor"].tap()
+    let newConversation = app.buttons["mentor.ask"]
+    newConversation.tap()
+    let input = element(app, id: "conversation.input")
+    XCTAssertTrue(input.waitForExistence(timeout: 10))
+    let standardInputHeight = input.frame.height
+    XCTAssertGreaterThan(standardInputHeight, 0)
+
+    app.terminate()
+    app.launchArguments = [
+      "-ui-smoke-preserve", "-UIPreferredContentSizeCategoryName",
+      "UICTContentSizeCategoryAccessibilityXXXL",
+    ]
+    app.launch()
+    app.tabBars.buttons["AI Mentor"].tap()
+    guard reach(newConversation, in: app) else { return }
+    newConversation.tap()
+    XCTAssertTrue(input.waitForExistence(timeout: 10))
+    XCTAssertGreaterThan(
+      input.frame.height, standardInputHeight * 1.25,
+      "The largest Dynamic Type launch must make the same input measurably taller")
+    let welcome = app.staticTexts["How can I help you learn?"].firstMatch
+    let transcript = app.scrollViews["conversation.transcript"]
+    guard reach(welcome, in: app, scrolling: transcript) else { return }
+    let send = app.buttons["conversation.send"]
+    let sources = app.buttons["conversation.sources"]
+    XCTAssertTrue(input.isHittable)
+    XCTAssertTrue(send.isHittable)
+    XCTAssertFalse(send.isEnabled)
+    attachScreenshot("Dark Mentor chat, largest Dynamic Type", app: app)
+
+    let draft = "Study plan"
+    input.tap()
+    input.typeText(draft)
+    XCTAssertTrue(app.keyboards.firstMatch.exists)
+    XCTAssertTrue(input.isHittable)
+    XCTAssertTrue(send.isHittable, "Approval must remain reachable above the keyboard")
+    XCTAssertTrue(sources.isHittable)
+    let review = app.buttons["conversation.reviewRequest"]
+    XCTAssertTrue(review.isHittable)
+    XCTAssertEqual(send.isEnabled, !element(app, id: "conversation.availability").exists)
+    let keyboardScreenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    keyboardScreenshot.name = "Dark Mentor composer with keyboard, largest Dynamic Type"
+    keyboardScreenshot.lifetime = .keepAlways
+    add(keyboardScreenshot)
+
+    sources.tap()
+    XCTAssertTrue(app.navigationBars["Add context"].waitForExistence(timeout: 5))
+    let progress = element(app, id: "question.source.progress")
+    guard reach(progress, in: app) else { return }
+    XCTAssertEqual(progress.value as? String, "0")
+    attachScreenshot("Dark Mentor context sheet, largest Dynamic Type", app: app)
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    XCTAssertEqual(input.value as? String, draft)
+
+    review.tap()
+    XCTAssertTrue(app.navigationBars["Review request"].waitForExistence(timeout: 5))
+    guard reach(app.staticTexts["Apple on-device AI uses this message and any selected text."], in: app) else { return }
+    attachScreenshot("Dark Mentor exact request review, largest Dynamic Type", app: app)
+    app.navigationBars.buttons["Done"].tap()
+    XCTAssertEqual(input.value as? String, draft)
+    XCTAssertFalse(element(app, id: "conversation.question.0").exists)
   }
 
 }
