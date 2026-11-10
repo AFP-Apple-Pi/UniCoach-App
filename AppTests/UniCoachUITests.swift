@@ -1162,6 +1162,91 @@ final class UniCoachUITests: XCTestCase {
     XCTAssertTrue(app.navigationBars["Assignment"].exists)
   }
 
+  func testMentorEvaluationReview() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_MENTOR_EVAL"] == "review" else {
+      throw XCTSkip("Requires an isolated synthetic review fixture and the review evaluation mode.")
+    }
+    continueAfterFailure = false
+    let app = alphaFixtureApp()
+    try checkAlphaAssignmentReview(in: app, feedbackPrefix: nil, retainGoal: false)
+  }
+
+  func testMentorEvaluationChat() throws {
+    let environment = ProcessInfo.processInfo.environment
+    guard environment["UNICOACH_MENTOR_EVAL"] == "chat" else {
+      throw XCTSkip("Requires an isolated synthetic chat fixture and the chat evaluation mode.")
+    }
+    continueAfterFailure = false
+    let question = try XCTUnwrap(environment["UNICOACH_MENTOR_EVAL_QUESTION"])
+    XCTAssertFalse(question.isEmpty)
+    let followup = environment["UNICOACH_MENTOR_EVAL_FOLLOWUP"].flatMap { $0.isEmpty ? nil : $0 }
+    let sourceKinds = environment["UNICOACH_MENTOR_EVAL_SOURCES"].map {
+      $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    } ?? (environment["UNICOACH_MENTOR_EVAL_PAIR"] == "1" ? ["work", "feedback"] : [])
+    let supportedSources = Set(["work", "feedback", "brief", "reflection", "guided-reflection"])
+    XCTAssertEqual(Set(sourceKinds).count, sourceKinds.count)
+    XCTAssertTrue(Set(sourceKinds).isSubset(of: supportedSources))
+    let app = alphaFixtureApp()
+    app.tabBars.buttons["AI Mentor"].tap()
+    app.buttons["mentor.ask"].tap()
+    let availability = element(app, id: "conversation.availability")
+    if availability.exists { throw XCTSkip(availability.label) }
+
+    let sources = app.buttons["conversation.sources"]
+    let input = element(app, id: "conversation.input")
+    let send = app.buttons["conversation.send"]
+    let transcript = app.scrollViews["conversation.transcript"]
+    let messages = [question] + (followup.map { [$0] } ?? [])
+    for (index, message) in messages.enumerated() {
+      XCTAssertEqual(sources.label, "Add context")
+      enter(message, id: "conversation.input", in: app)
+      guard dismissKeyboard("conversation.keyboardDone", in: app) else { return }
+      XCTAssertEqual(input.value as? String, message)
+      if index == 0 && !sourceKinds.isEmpty {
+        sources.tap()
+        for kind in sourceKinds {
+          chooseSwitch(element(app, id: "question.source.assignment:" + alphaAssignmentID + ":" + kind), in: app)
+        }
+        app.buttons["conversation.useSources"].tap()
+        let selectionLabel = sourceKinds.count == 1 ? "1 source selected" : "\(sourceKinds.count) sources selected"
+        XCTAssertEqual(sources.label, selectionLabel)
+      }
+      XCTAssertTrue(send.isEnabled)
+      send.tap()
+      let savedQuestion = element(app, id: "conversation.question.\(index)")
+      let answer = element(app, id: "conversation.answer.\(index)")
+      let alert = app.alerts["Mentor"]
+      let outcome = XCTNSPredicateExpectation(
+        predicate: NSPredicate { _, _ in answer.exists || alert.exists }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [outcome], timeout: 240), .completed)
+      if alert.exists {
+        let error = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        let evidence = XCTAttachment(string: error)
+        evidence.name = "Mentor evaluation chat turn \(index + 1) first attempt error"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        print("mentor_eval_chat_turn_\(index + 1)=single_attempt_error")
+        return
+      }
+      XCTAssertEqual(savedQuestion.label, message)
+      XCTAssertFalse(answer.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      XCTAssertFalse(send.isEnabled)
+      print("mentor_eval_chat_turn_\(index + 1)=single_attempt_saved")
+      attachScreenshot("Mentor evaluation chat turn \(index + 1)", app: app)
+    }
+    app.terminate()
+    app.launch()
+    app.tabBars.buttons["AI Mentor"].tap()
+    let saved = app.buttons["mentor.conversation"]
+    guard reach(saved, in: app) else { return }
+    saved.tap()
+    for (index, message) in messages.enumerated().reversed() {
+      let savedQuestion = element(app, id: "conversation.question.\(index)")
+      guard reach(savedQuestion, in: app, scrolling: transcript, up: false) else { return }
+      XCTAssertEqual(savedQuestion.label, message)
+    }
+  }
+
   func testAlphaBlindUnrelatedFeedback() throws {
     guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_MODEL_FIXTURE"] == "blind" else {
       throw XCTSkip("Requires the blind alpha fixture in the isolated smoke store.")
@@ -1447,7 +1532,7 @@ final class UniCoachUITests: XCTestCase {
   }
 
   private func checkAlphaAssignmentReview(
-    in app: XCUIApplication, feedbackPrefix: String, retainGoal: Bool
+    in app: XCUIApplication, feedbackPrefix: String?, retainGoal: Bool
   ) throws {
     app.tabBars.buttons["AI Mentor"].tap()
     let assignment = app.buttons.matching(NSPredicate(
@@ -1463,10 +1548,14 @@ final class UniCoachUITests: XCTestCase {
     let feedback = app.textViews["Approved text for Tutor feedback"]
     guard reach(work, in: app) else { return }
     let exactWork = try XCTUnwrap(work.value as? String)
-    XCTAssertTrue(exactWork.hasPrefix("I interviewed three commuting students"))
+    XCTAssertFalse(exactWork.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    if feedbackPrefix != nil {
+      XCTAssertTrue(exactWork.hasPrefix("I interviewed three commuting students"))
+    }
     guard reach(feedback, in: app) else { return }
     let exactFeedback = try XCTUnwrap(feedback.value as? String)
-    XCTAssertTrue(exactFeedback.hasPrefix(feedbackPrefix))
+    XCTAssertFalse(exactFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    if let feedbackPrefix { XCTAssertTrue(exactFeedback.hasPrefix(feedbackPrefix)) }
 
     let availability = element(app, id: "mentor.availability")
     guard reach(availability, in: app) else { return }
@@ -1484,7 +1573,7 @@ final class UniCoachUITests: XCTestCase {
       predicate: NSPredicate { _, _ in
         alert.exists || saved.exists
       }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [outcome], timeout: 180), .completed)
+    XCTAssertEqual(XCTWaiter.wait(for: [outcome], timeout: 240), .completed)
     if alert.exists {
       let message = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
       let result = XCTAttachment(string: message)
@@ -1504,8 +1593,9 @@ final class UniCoachUITests: XCTestCase {
 
     if retainGoal {
       let nextStepOutcome = app.descendants(matching: .any).matching(NSPredicate(
-        format: "identifier == %@ OR label == %@",
-        "goal.fromReport", "No specific next step was identified from the feedback."
+        format: "identifier == %@ OR label == %@ OR label == %@",
+        "goal.fromReport", "No specific next step was identified from the feedback.",
+        "No supported keep doing finding in this review."
       )).firstMatch
       guard reach(nextStepOutcome, in: app, attempts: 14) else { return }
       if nextStepOutcome.identifier == "goal.fromReport" {

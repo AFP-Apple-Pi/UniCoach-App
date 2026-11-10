@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ModelProcessingKind: String, Codable { case chunk, reduction, final }
+public enum ModelProcessingKind: String, Codable { case chunk, reduction, final, relevance, findingCheck, planRouting, planExtraction, planValidation, feedbackTarget }
 
 public struct ModelProcessingRange: Codable, Equatable {
   public let location: Int

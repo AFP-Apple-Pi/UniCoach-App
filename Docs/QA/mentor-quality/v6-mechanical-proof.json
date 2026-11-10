@@ -1,0 +1,9 @@
+{
+  "case": "relevant",
+  "version": "v6",
+  "exactEvidenceOffsets": true,
+  "acceptedFindings": 3,
+  "actualModelCalls": 7,
+  "acceptedFindingsHadSupportedModelVerdict": true,
+  "note": "Exact text and model verdict provenance, not independent semantic truth."
+}

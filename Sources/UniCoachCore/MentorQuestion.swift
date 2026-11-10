@@ -4,9 +4,13 @@ public struct MentorQuestionInput {
   public let instructions: String
   public let prompt: String
   public let currentQuestion: String
+  public let sources: [ApprovedSource]
+  public let historyQuestions: [String]
 
   init(request: ApprovedRequest) {
     currentQuestion = request.question
+    sources = request.sources
+    historyQuestions = request.conversation?.turns.map(\.question) ?? []
     instructions = """
       You are UniCoach, a study mentor. Answer the student's question directly and suggest practical next steps where useful.
       Use only the explicitly approved conversation and context supplied with this request. Use supplied conversation details when relevant.

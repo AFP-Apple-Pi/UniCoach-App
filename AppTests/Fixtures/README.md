@@ -63,3 +63,15 @@ The Apple cases require a compatible iPhone with the on-device model ready. Each
 ## Populated normal-store smoke check
 
 After installing the normal signed build and populating the test device with the fictional student records, set `UNICOACH_ALPHA_NORMAL_FIXTURE=student` and run `testAlphaPopulatedNormalLaunch`. It opens the app without smoke-store arguments, verifies the Jordan Lee greeting before capturing screenshots, and reads the profile, catalogue, positive and no-match subject search, progress, saved Apple report and two-turn conversation. It does not change records or start an AI request.
+
+## Mentor relevance and study-plan evaluations
+
+`mentor-evaluations.json` fixes the invented source variants, questions and semantic expectations before generation. Generate one local fixture and copy it to the isolated store using the same command as above.
+
+```sh
+python3 AppTests/Fixtures/make_mentor_fixture.py mixed /private/tmp/mentor-evaluation.json
+```
+
+For a review case set `UNICOACH_MENTOR_EVAL=review` and run `testMentorEvaluationReview`. It approves the exact work and feedback once and preserves either the saved report or the first error. For a chat case set `UNICOACH_MENTOR_EVAL=chat`, `UNICOACH_MENTOR_EVAL_QUESTION`, and, when specified in the manifest, `UNICOACH_MENTOR_EVAL_FOLLOWUP`. Set `UNICOACH_MENTOR_EVAL_PAIR=1` for cases marked `pair` and run `testMentorEvaluationChat`. The first turn selects only the designated work and feedback in paired cases. The follow-up approves visible history with no new sources. For an isolated long-context smoke test, set `UNICOACH_MENTOR_EVAL_SOURCES=work` with the preloaded long work fixture.
+
+Export the isolated store and result bundle before replacing the fixture. The UI cases verify approval, persistence and exact snapshots where applicable. Evaluate relevance, proposed tasks, durations and completion checks separately against the predeclared expectations, including unsuccessful first outputs. These cases skip without their opt-in environment.

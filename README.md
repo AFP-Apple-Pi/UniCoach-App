@@ -28,6 +28,10 @@ Cancelled requests, deleted or changed conversations, and changed selected sourc
 
 **Review assignment feedback** remains available for paired work and tutor-feedback analysis, including Maria's Keep doing, Improve and Next step advice and linked goals. New assignment reviews use Apple on-device AI only. There is no engine picker or offline fallback. Existing reports from the retired contextual offline option remain readable and retain their original engine label. Both chat and assignment reviews require explicit approval; selected context can be edited before use. Model output can be inaccurate and should be checked.
 
+Feedback reviews first check what each tutor comment refers to, whether it relates to the approved work, and whether each proposed finding is supported. Uncertain or unrelated feedback asks for clarification; partial feedback can produce a limited review. Internal passage IDs are hidden in ordinary advice while exact quotes and processing records remain available. These checks use the same on-device model and can still misclassify praise or requested changes.
+
+For explicit study allocations, the app builds session slots from grounded counts and durations, then asks Apple AI for a task and end check in each. A follow-up can change the allocation. Additional constraints are checked or clarified, and incompatible time limits are explained rather than silently changed. Ordinary questions stay conversational. See the [mentor quality report](Docs/MENTOR_QUALITY.md) for supported cases, first-attempt evidence and remaining errors.
+
 Imports support UTF-8 text and PDFs containing selectable text, up to 2 MB and 100,000 extracted characters. Scanned PDFs need transcription before import. Review the extracted text before using it.
 
 Run `swift test` for core tests. For manual verification, use only synthetic data, enable Airplane Mode, add the sample explicitly, and inspect the assignment and consent flow. Reports remain in local history after source edits or deletion. The UI smoke test uses a separate disposable synthetic data file and never resets the normal store.
@@ -44,4 +48,6 @@ See [device verification](Docs/DEVICE_TESTING.md) for validation and model limit
 
 ## Alpha verification
 
-The [10 November 2026 alpha report](Docs/ALPHA_TESTING.md) records the feature coverage matrix, positive and rejection cases, reproducible fictional fixtures, two fixed defects and actual model evidence. All 68 core tests and all 14 distinct physical UI workflows passed their final technical assertions. The alpha is not fully passing: Apple AI failed to detect unrelated tutor feedback and only partly followed a two-session planning request. Those first responses were retained without tuning or retrying for a better outcome.
+The [10 November 2026 alpha report](Docs/ALPHA_TESTING.md) records the feature coverage matrix, positive and rejection cases, reproducible fictional fixtures, two fixed defects and actual model evidence. All 68 core tests and all 14 distinct physical UI workflows passed their final technical assertions. At that checkpoint the alpha was not fully passing: Apple AI failed to detect unrelated tutor feedback and only partly followed a two-session planning request. Those first responses were retained without tuning or retrying for a better outcome.
+
+The subsequent [mentor quality revision](Docs/MENTOR_QUALITY.md) adds relevance checks and constrained session plans, with new first-attempt device evidence. It records improvements and remaining semantic errors separately from technical test passes.

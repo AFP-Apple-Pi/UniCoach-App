@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-10",
+  "platform": "iPhone 16, iOS 27.2, Xcode 27.2",
+  "coreTestsPassed": 98,
+  "coreTestsFailed": 0,
+  "coreLineCoveragePercent": 96.72,
+  "coverageScope": "UniCoachCore only; test and derived files excluded",
+  "semanticScenarioCount": 12,
+  "firstAttemptScenarioExecutionsAcrossVersions": 38,
+  "finalPhysicalRegressions": {
+    "accessibility": {
+      "passed": true,
+      "seconds": 28.869
+    },
+    "consent": {
+      "passed": true,
+      "seconds": 33.502
+    },
+    "conversation": {
+      "passed": true,
+      "seconds": 75.871
+    }
+  },
+  "normalDataByteIdentical": true,
+  "normalLaunchSucceeded": true,
+  "normalProcessStillRunning": true,
+  "note": "Technical passes do not establish semantic correctness. See MENTOR_QUALITY.md for failed first outcomes and residual limitations."
+}

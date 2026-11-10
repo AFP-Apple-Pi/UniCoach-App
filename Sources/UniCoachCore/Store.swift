@@ -383,10 +383,13 @@ import Observation
   /// All approved work and feedback text is represented, without truncation.
   public func evidencePassages(request: ApprovedRequest) -> [EvidencePassage] {
     guard let assignmentID = request.assignmentID else { return [] }
+    return evidencePassages(sources: request.sources, assignmentID: assignmentID)
+  }
+  public func evidencePassages(sources: [ApprovedSource], assignmentID: UUID) -> [EvidencePassage] {
     let prefix = "assignment:\(assignmentID.uuidString):"
     let permitted = Set([prefix + "work", prefix + "feedback"])
     var passages: [EvidencePassage] = []
-    for source in request.sources where permitted.contains(source.id) {
+    for source in sources where permitted.contains(source.id) {
       var start = source.text.startIndex
       while start < source.text.endIndex {
         let limit =
@@ -434,11 +437,22 @@ import Observation
     request: ApprovedRequest, category: ReviewCategory, explanation: String, nextStep: String,
     workPassageID: String, feedbackPassageID: String
   ) throws -> ReviewFinding {
-    guard let assignmentID = request.assignmentID,
-      !explanation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+    guard let assignmentID = request.assignmentID else { throw UniCoachError.invalidEvidence }
+    return try resolveFinding(
+      sources: request.sources, assignmentID: assignmentID, category: category,
+      explanation: explanation, nextStep: nextStep, workPassageID: workPassageID,
+      feedbackPassageID: feedbackPassageID)
+  }
+
+  public func resolveFinding(
+    sources: [ApprovedSource], assignmentID: UUID, category: ReviewCategory,
+    explanation: String, nextStep: String, workPassageID: String, feedbackPassageID: String
+  ) throws -> ReviewFinding {
+    guard !explanation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       !nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { throw UniCoachError.invalidEvidence }
-    let passages = evidencePassages(request: request) + feedbackSentencePassages(request: request)
+    let passages = evidencePassages(sources: sources, assignmentID: assignmentID)
+      + feedbackSentencePassages(sources: sources, assignmentID: assignmentID)
     let prefix = "assignment:\(assignmentID.uuidString):"
     guard
       let work = passages.first(where: {
@@ -563,11 +577,13 @@ import Observation
 
   /// Sentence IDs resolve locally to exact approved text, so a model need not copy quotes.
   public func feedbackSentencePassages(request: ApprovedRequest) -> [EvidencePassage] {
-    guard let id = request.assignmentID,
-      let feedback = request.sources.first(where: {
-        $0.id == "assignment:\(id.uuidString):feedback"
-      })
-    else { return [] }
+    guard let assignmentID = request.assignmentID else { return [] }
+    return feedbackSentencePassages(sources: request.sources, assignmentID: assignmentID)
+  }
+  public func feedbackSentencePassages(sources: [ApprovedSource], assignmentID: UUID) -> [EvidencePassage] {
+    guard let feedback = sources.first(where: {
+      $0.id == "assignment:\(assignmentID.uuidString):feedback"
+    }) else { return [] }
     let text = feedback.text
     return sentenceRanges(in: text).map { range in
       let nsRange = NSRange(range, in: text)

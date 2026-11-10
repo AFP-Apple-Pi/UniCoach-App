@@ -1,0 +1,22 @@
+{
+  "aggregateCharacters": 50000,
+  "originalPromptUTF16Units": 50211,
+  "chunks": [
+    [
+      {
+        "length": 34720,
+        "location": 0
+      }
+    ],
+    [
+      {
+        "length": 15491,
+        "location": 34720
+      }
+    ]
+  ],
+  "actualCallCount": 4,
+  "exactCurrentQuestionInFinalPrompt": true,
+  "finalOutputEqualsSavedAnswer": true,
+  "semanticLimitation": "The first response omits the ending twelve-month monitoring recommendation despite complete source processing."
+}
