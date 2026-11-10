@@ -274,12 +274,14 @@ public struct ConsentDraft {
   public var question: String
   public var engine: MentorEngine
   public var assignmentID: UUID?
+  public var conversation: MentorConversationSnapshot?
   public private(set) var selectedSources: [ContextSource]
   internal var originals: [String: String] = [:]
   public init(
     question: String = "", engine: MentorEngine = .contextualOffline, assignmentID: UUID? = nil,
-    purpose: MentorPurpose = .feedbackReview
+    purpose: MentorPurpose = .feedbackReview, conversation: MentorConversationSnapshot? = nil
   ) {
+    self.conversation = conversation
     self.purpose = purpose
     self.question = question
     self.engine = engine
@@ -311,12 +313,14 @@ public struct ApprovedRequest: Codable, Identifiable, Equatable {
   public let engine: MentorEngine
   public let sources: [ApprovedSource]
   public let assignmentID: UUID?
+  public let conversation: MentorConversationSnapshot?
   internal let assignmentFingerprint: String?
   public init(
     id: UUID = UUID(), createdAt: Date = Date(), question: String, engine: MentorEngine,
     sources: [ApprovedSource], assignmentID: UUID? = nil, assignmentFingerprint: String? = nil,
-    purpose: MentorPurpose = .feedbackReview
+    purpose: MentorPurpose = .feedbackReview, conversation: MentorConversationSnapshot? = nil
   ) {
+    self.conversation = conversation
     self.id = id
     self.createdAt = createdAt
     self.purpose = purpose
@@ -327,12 +331,13 @@ public struct ApprovedRequest: Codable, Identifiable, Equatable {
     self.assignmentFingerprint = assignmentFingerprint
   }
   private enum CodingKeys: String, CodingKey {
-    case id, createdAt, purpose, question, engine, sources, assignmentID, assignmentFingerprint
+    case id, createdAt, purpose, question, engine, sources, assignmentID, assignmentFingerprint, conversation
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     id = try c.decode(UUID.self, forKey: .id)
     createdAt = try c.decode(Date.self, forKey: .createdAt)
+    conversation = try c.decodeIfPresent(MentorConversationSnapshot.self, forKey: .conversation)
     purpose = try c.decodeIfPresent(MentorPurpose.self, forKey: .purpose) ?? .feedbackReview
     question = try c.decode(String.self, forKey: .question)
     engine = try c.decode(MentorEngine.self, forKey: .engine)
@@ -645,8 +650,8 @@ public enum UniCoachError: LocalizedError, Equatable {
     case .invalidQuestion: return "Enter a question for your mentor."
     case .noSources: return "Select at least one source."
     case .emptySource: return "Selected sources must contain approved text."
-    case .contextTooLong: return "The approved context is too long."
-    case .sourceChanged: return "A selected source changed. Review your consent again."
+    case .contextTooLong: return "The question, conversation and approved context are too long. Remove context or start a new conversation."
+    case .sourceChanged: return "A selected source or conversation changed. Review your consent again."
     case .invalidEvidence: return "The response must reference approved sources."
     case .cancelled: return "This request was cancelled or is no longer active."
     case .invalidRelationship: return "The linked subject could not be found."

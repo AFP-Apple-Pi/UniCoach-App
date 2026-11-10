@@ -142,7 +142,9 @@ final class MentorQuestionTests: XCTestCase {
     XCTAssertEqual(afterDeletion.goals, previousData.goals)
   }
 
-  @MainActor func testCancelledNoContextTicketRejectsLateResponseAndDuplicateInvocation() async throws {
+  @MainActor func testCancelledNoContextTicketRejectsLateResponseAndDuplicateInvocation()
+    async throws
+  {
     let store = makeStore()
     let draft = ConsentDraft(
       question: "Where should I start?", engine: .appleOnDevice, purpose: .mentorQuestion)
@@ -233,7 +235,8 @@ final class MentorQuestionTests: XCTestCase {
     }
 
     draft.setSelected(false, source: first)
-    draft.setSelected(true, source: try XCTUnwrap(store.contextSources().first { $0.id == first.id }))
+    draft.setSelected(
+      true, source: try XCTUnwrap(store.contextSources().first { $0.id == first.id }))
     let nextRequest = try store.approve(draft: draft)
     let nextTicket = try store.beginGeneration(for: nextRequest)
     do {
@@ -313,6 +316,260 @@ final class MentorQuestionTests: XCTestCase {
       """
     let decoded = try JSONDecoder().decode(ApprovedRequest.self, from: Data(legacy.utf8))
     XCTAssertEqual(decoded.purpose, .feedbackReview)
+  }
+
+  @MainActor func testConversationConsentPersistenceIsolationAndDeletion() async throws {
+    let store = makeStore()
+    try store.saveProfile(.init(name: "Private synthetic source"))
+    var firstDraft = ConsentDraft(
+      question: "First question", engine: .appleOnDevice, purpose: .mentorQuestion)
+    firstDraft.setSelected(true, source: try XCTUnwrap(store.contextSources().first))
+    let firstRequest = try store.approve(draft: firstDraft)
+    let first = try await store.generateMentorAnswer(
+      request: firstRequest, ticket: store.beginGeneration(for: firstRequest)
+    ) { _ in "First answer" }
+    let snapshot = try store.conversationSnapshot(id: first.threadID)
+    XCTAssertEqual(snapshot.transcript, "Question:\nFirst question\n\nMentor:\nFirst answer")
+    let followup = ConsentDraft(
+      question: "Second question", engine: .appleOnDevice, purpose: .mentorQuestion,
+      conversation: snapshot)
+    let request = try store.approve(draft: followup)
+    let second = try await store.generateMentorAnswer(
+      request: request, ticket: store.beginGeneration(for: request)
+    ) { input in
+      XCTAssertTrue(input.prompt.contains(snapshot.transcript))
+      XCTAssertFalse(input.prompt.contains("Private synthetic source"))
+      return "Second answer"
+    }
+    XCTAssertEqual(second.threadID, first.id)
+    XCTAssertEqual(second.approvedConversation, snapshot)
+    XCTAssertTrue(second.sources.isEmpty)
+    let reopened = UniCoachStore(fileURL: store.fileURL)
+    XCTAssertEqual(reopened.conversationAnswers(id: first.id), [first, second])
+    XCTAssertEqual(
+      try reopened.conversationSnapshot(id: first.id).turns.map(\.answerID), [first.id, second.id])
+    try reopened.deleteMentorConversation(id: first.id)
+    XCTAssertTrue(UniCoachStore(fileURL: store.fileURL).data.mentorAnswers.isEmpty)
+    XCTAssertThrowsError(try reopened.conversationSnapshot(id: first.id))
+  }
+
+  @MainActor func testConcurrentRepliesAndDeletedTurnRejectStaleSnapshots() async throws {
+    let store = makeStore()
+    let rootRequest = try store.approve(
+      draft: ConsentDraft(question: "Root", engine: .appleOnDevice, purpose: .mentorQuestion))
+    let root = try await store.generateMentorAnswer(
+      request: rootRequest, ticket: store.beginGeneration(for: rootRequest)
+    ) { _ in "Root answer" }
+    let snapshot = try store.conversationSnapshot(id: root.id)
+    let draft = ConsentDraft(
+      question: "Follow up", engine: .appleOnDevice, purpose: .mentorQuestion,
+      conversation: snapshot)
+    let firstRequest = try store.approve(draft: draft)
+    let secondRequest = try store.approve(draft: draft)
+    let firstTicket = try store.beginGeneration(for: firstRequest)
+    let secondTicket = try store.beginGeneration(for: secondRequest)
+    let (started, signalStarted) = AsyncStream<Void>.makeStream()
+    let (release, allowResponse) = AsyncStream<Void>.makeStream()
+    let late = Task { @MainActor in
+      try await store.generateMentorAnswer(request: secondRequest, ticket: secondTicket) { _ in
+        signalStarted.yield(())
+        var iterator = release.makeAsyncIterator()
+        _ = await iterator.next()
+        return "Late answer"
+      }
+    }
+    var iterator = started.makeAsyncIterator()
+    _ = await iterator.next()
+    _ = try await store.generateMentorAnswer(request: firstRequest, ticket: firstTicket) { _ in
+      "First reply"
+    }
+    allowResponse.yield(())
+    allowResponse.finish()
+    do {
+      _ = try await late.value
+      XCTFail("Stale reply must not save")
+    } catch { XCTAssertEqual(error as? UniCoachError, .sourceChanged) }
+    XCTAssertEqual(store.conversationAnswers(id: root.id).count, 2)
+    XCTAssertThrowsError(try store.approve(draft: draft)) {
+      XCTAssertEqual($0 as? UniCoachError, .sourceChanged)
+    }
+    let updated = try store.conversationSnapshot(id: root.id)
+    let updatedRequest = try store.approve(
+      draft: ConsentDraft(
+        question: "Next", engine: .appleOnDevice, purpose: .mentorQuestion, conversation: updated))
+    try store.deleteMentorAnswer(id: root.id)
+    XCTAssertThrowsError(try store.beginGeneration(for: updatedRequest)) {
+      XCTAssertEqual($0 as? UniCoachError, .sourceChanged)
+    }
+  }
+
+  @MainActor func testCancelledFollowupCannotSaveLateAnswer() async throws {
+    let store = makeStore()
+    let rootRequest = try store.approve(
+      draft: ConsentDraft(question: "Root", engine: .appleOnDevice, purpose: .mentorQuestion))
+    let root = try await store.generateMentorAnswer(
+      request: rootRequest, ticket: store.beginGeneration(for: rootRequest)
+    ) { _ in "Root answer" }
+    let snapshot = try store.conversationSnapshot(id: root.id)
+    let request = try store.approve(
+      draft: ConsentDraft(
+        question: "Follow up", engine: .appleOnDevice, purpose: .mentorQuestion,
+        conversation: snapshot))
+    let ticket = try store.beginGeneration(for: request)
+    do {
+      _ = try await store.generateMentorAnswer(request: request, ticket: ticket) { _ in
+        store.cancel(ticket: ticket)
+        return "Late answer"
+      }
+      XCTFail("Cancelled follow-up must not save")
+    } catch { XCTAssertEqual(error as? UniCoachError, .cancelled) }
+    XCTAssertEqual(try store.conversationSnapshot(id: root.id), snapshot)
+    XCTAssertThrowsError(try store.beginGeneration(for: request))
+  }
+
+  @MainActor func testConversationLimitAndFailedRetryRequiresFreshApproval() async throws {
+    let store = makeStore()
+    let rootRequest = try store.approve(
+      draft: ConsentDraft(question: "Root", engine: .appleOnDevice, purpose: .mentorQuestion))
+    let root = try await store.generateMentorAnswer(
+      request: rootRequest, ticket: store.beginGeneration(for: rootRequest)
+    ) { _ in "Answer" }
+    let snapshot = try store.conversationSnapshot(id: root.id)
+    var draft = ConsentDraft(
+      question: String(
+        repeating: "x", count: UniCoachStore.contextCharacterLimit - snapshot.transcript.count),
+      engine: .appleOnDevice, purpose: .mentorQuestion, conversation: snapshot)
+    _ = try store.approve(draft: draft)
+    draft.question += "x"
+    XCTAssertThrowsError(try store.approve(draft: draft)) {
+      XCTAssertEqual($0 as? UniCoachError, .contextTooLong)
+    }
+    draft.question = "Retry"
+    let failed = try store.approve(draft: draft)
+    do {
+      _ = try await store.generateMentorAnswer(
+        request: failed, ticket: store.beginGeneration(for: failed)
+      ) { _ in throw UniCoachError.engineUnavailable }
+      XCTFail("Expected failure")
+    } catch { XCTAssertEqual(error as? UniCoachError, .engineUnavailable) }
+    XCTAssertThrowsError(try store.beginGeneration(for: failed))
+    let retry = try store.approve(draft: draft)
+    _ = try await store.generateMentorAnswer(
+      request: retry, ticket: store.beginGeneration(for: retry)
+    ) { _ in "Recovered" }
+    XCTAssertEqual(store.conversationAnswers(id: root.id).count, 2)
+  }
+
+  @MainActor func testLegacyAnswerWithoutConversationFieldsDecodesAsRoot() async throws {
+    let store = makeStore()
+    let request = try store.approve(
+      draft: ConsentDraft(
+        question: "Old question", engine: .appleOnDevice, purpose: .mentorQuestion))
+    let saved = try await store.generateMentorAnswer(
+      request: request, ticket: store.beginGeneration(for: request)
+    ) { _ in "Old answer" }
+    let encoded = try JSONEncoder().encode(saved)
+    var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "conversationID")
+    object.removeValue(forKey: "approvedConversation")
+    let legacy = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(MentorAnswer.self, from: legacy)
+    XCTAssertNil(decoded.conversationID)
+    XCTAssertNil(decoded.approvedConversation)
+    XCTAssertEqual(decoded.threadID, decoded.id)
+  }
+
+  @MainActor func testIndependentThreadsAndFreshDraftDoNotShareHistory() async throws {
+    let store = makeStore()
+    func ask(_ question: String, _ answer: String) async throws -> MentorAnswer {
+      let draft = ConsentDraft(question: question, engine: .appleOnDevice, purpose: .mentorQuestion)
+      XCTAssertNil(draft.conversation)
+      let request = try store.approve(draft: draft)
+      return try await store.generateMentorAnswer(
+        request: request, ticket: store.beginGeneration(for: request)
+      ) { input in
+        XCTAssertFalse(input.prompt.contains("Thread A"))
+        XCTAssertFalse(input.prompt.contains("Thread B"))
+        return answer
+      }
+    }
+    let a = try await ask("First", "Thread A")
+    _ = try await ask("Second", "Thread B")
+    let snapshot = try store.conversationSnapshot(id: a.id)
+    let request = try store.approve(
+      draft: ConsentDraft(
+        question: "Reply", engine: .appleOnDevice, purpose: .mentorQuestion, conversation: snapshot)
+    )
+    _ = try await store.generateMentorAnswer(
+      request: request, ticket: store.beginGeneration(for: request)
+    ) { input in
+      XCTAssertTrue(input.prompt.contains("Thread A"))
+      XCTAssertFalse(input.prompt.contains("Thread B"))
+      return "Reply A"
+    }
+    _ = try await ask("Fresh", "Fresh answer")
+  }
+
+  @MainActor func testDeletingConversationDuringGenerationCannotResurrectIt() async throws {
+    let store = makeStore()
+    let rootRequest = try store.approve(
+      draft: ConsentDraft(question: "Root", engine: .appleOnDevice, purpose: .mentorQuestion))
+    let root = try await store.generateMentorAnswer(
+      request: rootRequest, ticket: store.beginGeneration(for: rootRequest)
+    ) { _ in "Answer" }
+    let snapshot = try store.conversationSnapshot(id: root.id)
+    let request = try store.approve(
+      draft: ConsentDraft(
+        question: "Reply", engine: .appleOnDevice, purpose: .mentorQuestion, conversation: snapshot)
+    )
+    do {
+      _ = try await store.generateMentorAnswer(
+        request: request, ticket: store.beginGeneration(for: request)
+      ) { _ in
+        try store.deleteMentorConversation(id: root.id)
+        return "Late answer"
+      }
+      XCTFail("Deleted conversation must not be restored")
+    } catch { XCTAssertEqual(error as? UniCoachError, .sourceChanged) }
+    XCTAssertTrue(store.conversationAnswers(id: root.id).isEmpty)
+  }
+
+  @MainActor func testHistoryWithFreshSourceLimitAndDeletedOldSource() async throws {
+    let store = makeStore()
+    let subject = Subject(name: "Synthetic")
+    try store.upsertSubject(subject)
+    let assignment = Assignment(subjectID: subject.id, brief: "Old private material")
+    try store.upsertAssignment(assignment)
+    let old = try XCTUnwrap(store.contextSources().first { $0.id.hasSuffix(":brief") })
+    var rootDraft = ConsentDraft(question: "Root", engine: .appleOnDevice, purpose: .mentorQuestion)
+    rootDraft.setSelected(true, source: old)
+    let rootRequest = try store.approve(draft: rootDraft)
+    let root = try await store.generateMentorAnswer(
+      request: rootRequest, ticket: store.beginGeneration(for: rootRequest)
+    ) { _ in "Answer" }
+    try store.deleteAssignment(id: assignment.id)
+    try store.saveProfile(.init(name: "Fresh material"))
+    let snapshot = try store.conversationSnapshot(id: root.id)
+    let fresh = try XCTUnwrap(store.contextSources().first { $0.id == "profile" })
+    var draft = ConsentDraft(
+      question: "Next", engine: .appleOnDevice, purpose: .mentorQuestion, conversation: snapshot)
+    draft.setSelected(true, source: fresh)
+    let remaining =
+      UniCoachStore.contextCharacterLimit - snapshot.transcript.count - draft.question.count
+    draft.setText(String(repeating: "x", count: remaining), sourceID: fresh.id)
+    _ = try store.approve(draft: draft)
+    draft.setText(String(repeating: "x", count: remaining + 1), sourceID: fresh.id)
+    XCTAssertThrowsError(try store.approve(draft: draft)) {
+      XCTAssertEqual($0 as? UniCoachError, .contextTooLong)
+    }
+    draft.setSelected(false, source: fresh)
+    let request = try store.approve(draft: draft)
+    _ = try await store.generateMentorAnswer(
+      request: request, ticket: store.beginGeneration(for: request)
+    ) { input in
+      XCTAssertFalse(input.prompt.contains("Old private material"))
+      return "Follow-up answer"
+    }
   }
 
   @MainActor private func makeStore() -> UniCoachStore {

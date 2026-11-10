@@ -139,6 +139,21 @@ import Observation
     n.mentorAnswers.removeAll { $0.id == id }
     try commit(n)
   }
+  public func conversationAnswers(id: UUID) -> [MentorAnswer] {
+    data.mentorAnswers.filter { $0.threadID == id }.reversed()
+  }
+  public func conversationSnapshot(id: UUID) throws -> MentorConversationSnapshot {
+    let answers = conversationAnswers(id: id)
+    guard !answers.isEmpty else { throw UniCoachError.sourceChanged }
+    return MentorConversationSnapshot(
+      conversationID: id,
+      turns: answers.map { MentorConversationTurn(answerID: $0.id, question: $0.question, answer: $0.answer) })
+  }
+  public func deleteMentorConversation(id: UUID) throws {
+    var n = data
+    n.mentorAnswers.removeAll { $0.threadID == id }
+    try commit(n)
+  }
   @discardableResult public func addSampleSubject() throws -> Subject {
     let subject = Subject(
       code: "DEMO101", name: "Example subject", credits: 6, tutor: "Example tutor", isDemo: true)
@@ -274,6 +289,11 @@ import Observation
     return sources
   }
   public func approve(draft: ConsentDraft, assignmentID: UUID? = nil) throws -> ApprovedRequest {
+    if let conversation = draft.conversation {
+      guard draft.purpose == .mentorQuestion,
+        try conversationSnapshot(id: conversation.conversationID) == conversation
+      else { throw UniCoachError.sourceChanged }
+    }
     let trimmedQuestion = draft.question.trimmingCharacters(in: .whitespacesAndNewlines)
     let question: String
     switch draft.purpose {
@@ -291,7 +311,8 @@ import Observation
       })
     else { throw UniCoachError.emptySource }
     guard
-      question.count + draft.selectedSources.reduce(0, { $0 + $1.text.count })
+      question.count + (draft.conversation?.transcript.count ?? 0)
+        + draft.selectedSources.reduce(0, { $0 + $1.text.count })
         <= Self.contextCharacterLimit
     else { throw UniCoachError.contextTooLong }
     let sources = draft.selectedSources.isEmpty ? [] : contextSources()
@@ -316,11 +337,16 @@ import Observation
     }
     let request = ApprovedRequest(
       question: question, engine: draft.engine, sources: approved, assignmentID: anchor,
-      assignmentFingerprint: anchorFingerprint, purpose: draft.purpose)
+      assignmentFingerprint: anchorFingerprint, purpose: draft.purpose, conversation: draft.conversation)
     approvedRequests[request.id] = request
     return request
   }
   private func validateCurrent(_ request: ApprovedRequest) throws {
+    if let conversation = request.conversation {
+      guard request.purpose == .mentorQuestion,
+        try conversationSnapshot(id: conversation.conversationID) == conversation
+      else { throw UniCoachError.sourceChanged }
+    }
     if let id = request.assignmentID {
       guard let assignment = data.assignments.first(where: { $0.id == id }),
         request.assignmentFingerprint == fingerprint(record(assignment)) + ":"
@@ -602,7 +628,8 @@ import Observation
     let saved = MentorAnswer(
       id: UUID(), createdAt: Date(), question: request.question, engine: request.engine,
       sources: request.sources, assignmentID: request.assignmentID,
-      instructionsSnapshot: input.instructions, promptSnapshot: input.prompt, answer: answer)
+      instructionsSnapshot: input.instructions, promptSnapshot: input.prompt, answer: answer,
+      conversationID: request.conversation?.conversationID, approvedConversation: request.conversation)
     var n = data
     n.mentorAnswers.insert(saved, at: 0)
     try commit(n)

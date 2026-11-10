@@ -54,7 +54,7 @@ After verification, the app was launched normally. Its normal data file was veri
 
 ## SwiftAgents review and Apple AI Mentor questions (10 November 2026)
 
-The AI Mentor tab now offers **Ask your mentor** alongside assignment feedback reviews. The question flow uses Apple's on-device Foundation Models engine only. Context is optional and starts unselected; every request requires an explicit Apple AI choice and approval. A fresh model session receives only the approved question and context, with no previous conversation. Without context, the answer is general study guidance. Answers retain the exact prompt, instructions, approved source titles and text, and can be deleted from local history.
+The initial question-only revision added **Ask your mentor** alongside assignment feedback reviews. The conversational revision below replaces that entry with **New conversation**. The question flow uses Apple's on-device Foundation Models engine only. Context is optional and starts unselected; every request requires an explicit Apple AI choice and approval. A fresh model session receives only the approved question and context, with no previous conversation. Without context, the answer is general study guidance. Answers retain the exact prompt, instructions, approved source titles and text, and can be deleted from local history.
 
 The review added compiler guards around Foundation Models, localized search, safe optional handling, migration UUID construction without force unwraps, reusable dashboard views and shared cards. The iOS 17 deployment target, Swift language mode, Figma layout, local signing configuration and existing learning logic remain unchanged. Debug builds now use the selected device architecture so app and local Swift package simulator slices agree.
 
@@ -68,7 +68,7 @@ For a live model check, use only synthetic data in the isolated UI test store:
 4. Inspect the saved answer's engine, question, source snapshots and exact model request. Check the answer against the approved text. Model interpretation is not independently validated.
 5. Start and cancel another request. Reopen the screen and confirm fresh consent is required. Verify saved answers remain readable after source edits/deletion, and that deleting an answer removes only that answer and its snapshots.
 
-Live Apple model generation for this new question flow has not yet been verified on a physical iPhone. Earlier hardware results above apply to the assignment-report flow only.
+The initial validation below was performed on a simulator. Physical verification of the subsequent conversational revision is recorded in the next section.
 
 Validation for this revision used Xcode 27.2:
 
@@ -79,4 +79,28 @@ Validation for this revision used Xcode 27.2:
 - Astra reviewed the resulting mentor, Home, Overview and Subjects screenshots. Readable tint and the approved dashboard layout were verified.
 - SwiftLint was not installed. No Swift compiler errors or warnings were reported; Xcode emitted its expected AppIntents metadata-skip warning because the app has no AppIntents dependency.
 
-These simulator results verify the new Foundation Models integration, not its behavior on a physical iPhone. No existing private uploads or normal app data were used for these tests.
+These simulator results apply to the initial question-only revision. No existing private uploads or normal app data were used for these tests.
+
+
+## Mentor conversations (10 November 2026)
+
+Open **AI Mentor > New conversation** to ask a question, or reopen a saved conversation to answer the mentor's follow-up questions. Existing single answers become one-turn conversations without rewriting the saved data during loading. Each reply requires **Approve conversation and send**, which approves the displayed conversation and new reply for Apple on-device AI. **Review exact conversation history** shows the full transcript. Earlier source snapshots are not reattached; visible messages may still quote or discuss those sources. Start a new conversation to select different source material.
+
+The app constructs each request from its explicitly approved transcript. Other conversations are excluded. Changed or deleted conversations, cancellation and changed selected sources prevent late responses from being saved. The combined transcript, new question and any newly selected source text must fit the 6,000-character limit; older turns are not silently truncated. **Request details** retains each turn's exact prompt and approved snapshots. Deleting a saved conversation requires confirmation and removes all of its turns.
+
+The physical test uses only synthetic material in `ui-smoke.json`:
+
+1. Ask for help planning study time and request a follow-up question. Select a synthetic progress source with a distinctive marker, explicitly enable Apple AI and approve the first request.
+2. Check that the first answer identifies Apple on-device and its request includes the exact approved synthetic context.
+3. Expand the conversation history and verify the displayed question and actual generated answer. Reply that weekday study time is limited to 30 minutes, then approve the conversation and send.
+4. Check the second answer and exact history-only prompt. Verify the earlier source snapshot was not automatically reattached.
+5. Relaunch with `-ui-smoke-preserve`, reopen the saved conversation and confirm both turns persist. Start a new conversation and confirm its question, context and Apple consent are empty. Confirm deleting the saved conversation removes the whole thread.
+
+Validation used Xcode 27.2 and a physical iPhone 16 running iOS 27.2. Apple's on-device model was available and generated both answers, with no stub or offline fallback. The second response incorporated the supplied 30-minute weekday constraint. Model interpretation remains the student's responsibility.
+
+- All 42 core tests passed, including 18 mentor tests covering legacy decoding, persistence, exact transcript boundaries, conversation isolation, cancellation, changed/deleted history and request limits.
+- The signed device build and build-for-testing passed with the existing bundle identifier and development team.
+- The physical conversation test passed in 69.136 seconds. Consent reset passed in 27.283 seconds. Astra reviewed the physical screenshots for readable controls, the reply composer, approval disclosure and response content.
+- The existing synthetic assignment, marks, offline-advice and goals regression passed on the physical phone in 122.452 seconds. Its first run exposed a test timing issue: the keyboard Done control existed before becoming hittable. A bounded readiness wait fixed the test; assignment production code was unchanged.
+- The app was reopened normally after testing. Before the separately requested synthetic sample-data population, the normal data file matched its pre-install backup byte-for-byte. Private contents were not displayed or used for generation.
+- A pre-existing runtime invalid-frame diagnostic appeared during the offline test without a visible or assertion failure. No blocking review findings remain.
