@@ -266,15 +266,21 @@ public struct ApprovedSource: Codable, Identifiable, Equatable {
     self.originalFingerprint = originalFingerprint
   }
 }
+public enum MentorPurpose: String, Codable {
+  case feedbackReview, mentorQuestion
+}
 public struct ConsentDraft {
+  public let purpose: MentorPurpose
   public var question: String
   public var engine: MentorEngine
   public var assignmentID: UUID?
   public private(set) var selectedSources: [ContextSource]
   internal var originals: [String: String] = [:]
   public init(
-    question: String = "", engine: MentorEngine = .contextualOffline, assignmentID: UUID? = nil
+    question: String = "", engine: MentorEngine = .contextualOffline, assignmentID: UUID? = nil,
+    purpose: MentorPurpose = .feedbackReview
   ) {
+    self.purpose = purpose
     self.question = question
     self.engine = engine
     self.assignmentID = assignmentID
@@ -300,6 +306,7 @@ public struct ConsentDraft {
 public struct ApprovedRequest: Codable, Identifiable, Equatable {
   public let id: UUID
   public let createdAt: Date
+  public let purpose: MentorPurpose
   public let question: String
   public let engine: MentorEngine
   public let sources: [ApprovedSource]
@@ -307,15 +314,31 @@ public struct ApprovedRequest: Codable, Identifiable, Equatable {
   internal let assignmentFingerprint: String?
   public init(
     id: UUID = UUID(), createdAt: Date = Date(), question: String, engine: MentorEngine,
-    sources: [ApprovedSource], assignmentID: UUID? = nil, assignmentFingerprint: String? = nil
+    sources: [ApprovedSource], assignmentID: UUID? = nil, assignmentFingerprint: String? = nil,
+    purpose: MentorPurpose = .feedbackReview
   ) {
     self.id = id
     self.createdAt = createdAt
+    self.purpose = purpose
     self.question = question
     self.engine = engine
     self.sources = sources
     self.assignmentID = assignmentID
     self.assignmentFingerprint = assignmentFingerprint
+  }
+  private enum CodingKeys: String, CodingKey {
+    case id, createdAt, purpose, question, engine, sources, assignmentID, assignmentFingerprint
+  }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(UUID.self, forKey: .id)
+    createdAt = try c.decode(Date.self, forKey: .createdAt)
+    purpose = try c.decodeIfPresent(MentorPurpose.self, forKey: .purpose) ?? .feedbackReview
+    question = try c.decode(String.self, forKey: .question)
+    engine = try c.decode(MentorEngine.self, forKey: .engine)
+    sources = try c.decode([ApprovedSource].self, forKey: .sources)
+    assignmentID = try c.decodeIfPresent(UUID.self, forKey: .assignmentID)
+    assignmentFingerprint = try c.decodeIfPresent(String.self, forKey: .assignmentFingerprint)
   }
 }
 public enum ReviewCategory: String, Codable, CaseIterable { case keepDoing, improve }
@@ -498,6 +521,7 @@ public struct AppData: Codable, Equatable {
   public var assignments: [Assignment]
   public var goals: [LearningGoal]
   public var reports: [MentorReport]
+  public var mentorAnswers: [MentorAnswer]
   // Read-only compatibility view, backed entirely by unified goals.
   public var focusActions: [FocusAction] {
     goals.compactMap { goal in
@@ -514,7 +538,7 @@ public struct AppData: Codable, Equatable {
   }
   public init(
     profile: AcademicProfile = .init(), subjects: [Subject] = [], assignments: [Assignment] = [],
-    goals: [LearningGoal] = [], reports: [MentorReport] = []
+    goals: [LearningGoal] = [], reports: [MentorReport] = [], mentorAnswers: [MentorAnswer] = []
   ) {
     schemaVersion = Self.currentSchemaVersion
     self.profile = profile
@@ -522,9 +546,10 @@ public struct AppData: Codable, Equatable {
     self.assignments = assignments
     self.goals = goals
     self.reports = reports
+    self.mentorAnswers = mentorAnswers
   }
   private enum CodingKeys: String, CodingKey {
-    case schemaVersion, profile, subjects, assignments, goals, reports, focusActions
+    case schemaVersion, profile, subjects, assignments, goals, reports, mentorAnswers, focusActions
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -538,6 +563,7 @@ public struct AppData: Codable, Equatable {
     assignments = try c.decode([Assignment].self, forKey: .assignments)
     goals = try c.decode([LearningGoal].self, forKey: .goals)
     reports = try c.decode([MentorReport].self, forKey: .reports)
+    mentorAnswers = try c.decodeIfPresent([MentorAnswer].self, forKey: .mentorAnswers) ?? []
     if version == 0 {
       let legacyFocus = try c.decodeIfPresent([FocusAction].self, forKey: .focusActions) ?? []
       for focus in legacyFocus where !goals.contains(where: { $0.id == focus.id }) {
@@ -556,11 +582,13 @@ public struct AppData: Codable, Equatable {
       func migratedID(_ key: String) -> UUID {
         var h: UInt64 = 14_695_981_039_346_656_037
         for b in key.utf8 { h = (h ^ UInt64(b)) &* 1_099_511_628_211 }
-        let str = String(
-          format: "%08X-%04X-4%03X-A%03X-%012llX", UInt32(truncatingIfNeeded: h >> 32),
-          UInt16(truncatingIfNeeded: h >> 16), UInt16(truncatingIfNeeded: h) & 0x0fff,
-          UInt16(truncatingIfNeeded: h >> 48) & 0x0fff, h & 0xffff_ffff_ffff)
-        return UUID(uuidString: str)!
+        func byte(_ shift: Int) -> UInt8 { UInt8(truncatingIfNeeded: h >> shift) }
+        // Keep the same byte layout and version and variant bits as the original migration.
+        return UUID(uuid: (
+          byte(56), byte(48), byte(40), byte(32), byte(24), byte(16),
+          0x40 | (byte(8) & 0x0f), byte(0), 0xa0 | (byte(56) & 0x0f), byte(48),
+          byte(40), byte(32), byte(24), byte(16), byte(8), byte(0)
+        ))
       }
       let profileText = profile.learningGoal
       if !profileText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -594,6 +622,7 @@ public struct AppData: Codable, Equatable {
     try c.encode(assignments, forKey: .assignments)
     try c.encode(goals, forKey: .goals)
     try c.encode(reports, forKey: .reports)
+    if !mentorAnswers.isEmpty { try c.encode(mentorAnswers, forKey: .mentorAnswers) }
   }
   public var averageGrade: Double? {
     let grades = assignments.filter { !$0.isDemo }.compactMap(\.percentage)
@@ -610,7 +639,7 @@ public struct GenerationTicket: Hashable {
 }
 public enum UniCoachError: LocalizedError, Equatable {
   case invalidQuestion, noSources, emptySource, contextTooLong, sourceChanged, invalidEvidence,
-    cancelled, invalidRelationship, invalidGrade, engineUnavailable
+    cancelled, invalidRelationship, invalidGrade, engineUnavailable, emptyAnswer
   public var errorDescription: String? {
     switch self {
     case .invalidQuestion: return "Enter a question for your mentor."
@@ -625,6 +654,7 @@ public enum UniCoachError: LocalizedError, Equatable {
       return
         "Enter a positive total. If marks are entered, they must be between zero and the total."
     case .engineUnavailable: return "This engine is unavailable."
+    case .emptyAnswer: return "The mentor returned an empty answer. Try asking again."
     }
   }
 }

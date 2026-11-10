@@ -12,7 +12,15 @@ xcodebuild -project UniCoach.xcodeproj -scheme UniCoach -destination 'generic/pl
 
 For updates to an app already installed on a physical device, preserve its existing bundle identifier and development team. For a fresh, independent installation, use your own development team and a unique bundle identifier in Xcode's Signing & Capabilities settings, or pass `DEVELOPMENT_TEAM` and `UNICOACH_BUNDLE_IDENTIFIER` as build overrides. The project does not contain a personal team ID.
 
-The Apple on-device mentor requires iOS 26 or later, eligible hardware, and an available Apple Intelligence model. The app shows the system availability reason. The separately selected contextual offline option is deterministic and is not AI. Each request requires fresh source selection and approval. You can edit the exact source text before approving; report history retains the approved snapshots and prompt. Model output can be inaccurate and should be checked.
+## AI Mentor
+
+Open the AI Mentor tab and choose **Ask your mentor**. Enter a study question or edit a starter. Optionally select private context, review and redact its exact text, enable Apple on-device AI for this request, and tap **Approve and ask**. With no selected context, the mentor offers general study guidance. Each request starts fresh without prior conversation history or automatic access to your records.
+
+Apple Intelligence generation uses the on-device Foundation Models system model. Build with Xcode 26 or newer; generation requires iOS 26 or later, eligible hardware, Apple Intelligence enabled, and a ready model. The app displays the availability reason and disables generation when unavailable. It never silently switches engines or uploads a request.
+
+Answers are saved locally with the approved question, source snapshots, model instructions and prompt. Inspect them under Saved mentor answers; swipe an answer to delete it after confirmation. Cancelled requests and requests whose selected sources changed cannot save a late answer. Each retry requires a new approval.
+
+**Review assignment feedback** remains available for paired work and tutor-feedback analysis, including Maria's Keep doing, Improve and Next step advice and linked goals. Its separately selected contextual offline option is deterministic and is not AI. Both flows require explicit approval; selected context can be edited before use. Model output can be inaccurate and should be checked.
 
 Imports support UTF-8 text and PDFs containing selectable text, up to 2 MB and 100,000 extracted characters. Scanned PDFs need transcription before import. Review the extracted text before using it.
 

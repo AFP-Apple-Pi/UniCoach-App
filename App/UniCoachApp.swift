@@ -1,4 +1,3 @@
-import FoundationModels
 import PDFKit
 import SwiftUI
 import UniCoachCore
@@ -129,10 +128,10 @@ struct SubjectsView: View {
   private var filtered: [Subject] {
     scoped.filter { subject in
       let matches =
-        query.isEmpty || subject.name.localizedCaseInsensitiveContains(query)
-        || subject.code.localizedCaseInsensitiveContains(query)
+        query.isEmpty || subject.name.localizedStandardContains(query)
+        || subject.code.localizedStandardContains(query)
         || app.data.assignments.contains {
-          $0.subjectID == subject.id && $0.title.localizedCaseInsensitiveContains(query)
+          $0.subjectID == subject.id && $0.title.localizedStandardContains(query)
         }
       let fits =
         filter == "All"
@@ -163,7 +162,11 @@ struct SubjectsView: View {
           Text("All semesters").tag("All semesters")
           ForEach(semesters, id: \.self) { Text($0).tag($0) }
         }.pickerStyle(.menu)
-        if mode == "Overview" { overview } else { subjectList }
+        if mode == "Overview" {
+          LearningOverview(realSubjects: realSubjects, assignments: assignments, goals: goals)
+        } else {
+          LearningSubjectList(realSubjects: realSubjects, assignments: assignments, filtered: filtered, filter: $filter)
+        }
         if app.data.subjects.isEmpty {
           ContentUnavailableView(
             "No subjects yet", systemImage: "books.vertical",
@@ -187,186 +190,7 @@ struct SubjectsView: View {
         }.accessibilityIdentifier("subject.add")
       }.sheet(item: $editing) { SubjectEditor(subject: $0) }
   }
-  private var overview: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      Text("Your learning journey").font(
-        .custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
-        StatCard(
-          title: "Subjects", value: "\(realSubjects.count)", symbol: "BookIcon",
-          color: Color(red: 0.85, green: 0.92, blue: 0.89))
-        StatCard(
-          title: "Assignments", value: "\(assignments.count)", symbol: "CalendarIcon",
-          color: Color(red: 0.89, green: 0.85, blue: 0.93))
-        StatCard(
-          title: "With feedback",
-          value: "\(assignments.filter { !$0.tutorFeedback.isEmpty }.count)",
-          symbol: "FeedbackIcon", color: Color(red: 0.96, green: 0.92, blue: 0.82))
-        StatCard(
-          title: "Goals completed", value: "\(goals.filter(\.isCompleted).count) of \(goals.count)",
-          symbol: "GoalIcon", color: Color(red: 0.87, green: 0.91, blue: 0.89))
-      }
-      if sizeClass == .regular {
-        HStack(alignment: .top, spacing: 20) {
-          progressCard
-          VStack(spacing: 20) {
-            actionsCard
-            deadlinesCard
-          }.frame(maxWidth: 400)
-        }
-      } else {
-        progressCard
-        actionsCard
-        deadlinesCard
-      }
-    }
-  }
-  private var progressCard: some View {
-    learningCard("Subject progress") {
-      HStack {
-        Text("See the marks you have entered so far.").foregroundStyle(.secondary)
-        Spacer()
-        Image("OverviewIllustration").resizable().scaledToFit().frame(width: 120)
-          .accessibilityHidden(true)
-      }
-      if realSubjects.isEmpty {
-        Text("Add a subject to see its progress.").foregroundStyle(.secondary)
-      }
-      ForEach(Array(realSubjects.enumerated()), id: \.element.id) { index, subject in
-        let marks = app.store.subjectMarks(subjectID: subject.id)
-        NavigationLink {
-          SubjectDetail(subjectID: subject.id)
-        } label: {
-          HStack(spacing: 12) {
-            Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.black).frame(
-              width: 32, height: 32
-            ).background(Color(red: 0.85, green: 0.92, blue: 0.89), in: Circle())
-            VStack(alignment: .leading, spacing: 6) {
-              Text(subject.name)
-              if let percentage = marks.percentage {
-                ProgressView(value: percentage, total: 100).tint(teal)
-              }
-            }
-            Text(
-              marks.percentage.map { "\($0.formatted(.number.precision(.fractionLength(2))))%" }
-                ?? "No marks"
-            ).font(.caption)
-          }
-        }.buttonStyle(.plain)
-      }
-    }
-  }
-  private var actionsCard: some View {
-    learningCard("Key actions") {
-      let open = goals.filter { !$0.isCompleted }
-      if open.isEmpty { Text("No open learning goals.").foregroundStyle(.secondary) }
-      ForEach(open.prefix(3)) { goal in
-        Button {
-          var updated = goal
-          updated.isCompleted = true
-          app.perform { try app.store.upsertGoal(updated) }
-        } label: {
-          Label(goal.title, systemImage: "circle")
-        }.buttonStyle(.plain)
-      }
-    }
-  }
-  private var deadlinesCard: some View {
-    learningCard("Upcoming deadlines") {
-      let upcoming = assignments.filter { ($0.dueDate ?? .distantPast) >= Date() }.sorted {
-        ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture)
-      }
-      if upcoming.isEmpty { Text("No upcoming deadlines entered.").foregroundStyle(.secondary) }
-      ForEach(upcoming.prefix(3)) { item in
-        NavigationLink {
-          AssignmentDetail(assignmentID: item.id)
-        } label: {
-          HStack(spacing: 12) {
-            if let date = item.dueDate {
-              VStack {
-                Text(date.formatted(.dateTime.day())).font(.headline)
-                Text(date.formatted(.dateTime.month(.abbreviated))).font(.caption)
-              }
-              .frame(width: 48, height: 48).background(
-                lavender, in: RoundedRectangle(cornerRadius: 12))
-            }
-            Text(item.title)
-          }
-        }.buttonStyle(.plain)
-      }
-    }
-  }
-  private var subjectList: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text("Subjects").font(
-        .custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-        learningCard("Your subject performance") {
-          Text("\(realSubjects.count)").font(
-            .custom("Inter-Regular", size: 34, relativeTo: .largeTitle).weight(.bold))
-          Text("Subjects in this selection").font(.caption).foregroundStyle(.secondary)
-        }
-        learningCard("Marks at a glance") {
-          Text("\(assignments.filter { $0.percentage != nil }.count) of \(assignments.count)").font(
-            .title2.bold())
-          Text("Assignments with marks entered").font(.caption).foregroundStyle(.secondary)
-        }
-      }
-      Text("Marks are weighted within each subject by their available points.").font(.caption)
-        .foregroundStyle(.secondary)
-      Picker("Filter", selection: $filter) {
-        Text("All").tag("All")
-        Text("With feedback").tag("With feedback")
-        Text("With goals").tag("With goals")
-      }.pickerStyle(.menu)
-      learningCard("Subjects") {
-        if filtered.isEmpty && !app.data.subjects.isEmpty {
-          Text("No matching subjects.").foregroundStyle(.secondary)
-        }
-        ForEach(filtered) { subject in
-          let marks = app.store.subjectMarks(subjectID: subject.id, includeDemo: subject.isDemo)
-          NavigationLink {
-            SubjectDetail(subjectID: subject.id)
-          } label: {
-            HStack(spacing: 14) {
-              RoundedRectangle(cornerRadius: 5).fill(subjectColor(subject.colorHex)).frame(width: 8)
-              VStack(alignment: .leading, spacing: 4) {
-                Text(subject.name).font(.headline)
-                Text("\(subject.code)\(subject.isDemo ? " • Sample" : "")").font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-              Spacer()
-              VStack(alignment: .trailing, spacing: 4) {
-                Text(
-                  marks.percentage.map { "\($0.formatted(.number.precision(.fractionLength(2))))%" }
-                    ?? "Awaiting marks"
-                )
-                .font(.caption).padding(.horizontal, 10).padding(.vertical, 5).background(
-                  lavender, in: Capsule())
-                let total = app.data.assignments.filter { $0.subjectID == subject.id }.count
-                Text("\(marks.gradedCount) of \(total) graded").font(.caption2).foregroundStyle(
-                  .secondary)
-                if total > 0 {
-                  ProgressView(value: Double(marks.gradedCount), total: Double(total)).tint(teal)
-                    .frame(width: 80)
-                }
-              }
-            }.padding(.vertical, 6)
-          }.buttonStyle(.plain)
-        }
-      }
-    }
-  }
-  private func learningCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content)
-    -> some View
-  {
-    VStack(alignment: .leading, spacing: 14) {
-      Text(title).font(.custom("Inter-Regular", size: 20, relativeTo: .title3).weight(.semibold))
-      content()
-    }
-    .frame(maxWidth: .infinity, alignment: .leading).padding(20).background(
-      .background, in: RoundedRectangle(cornerRadius: 24))
-  }
+
 }
 
 func subjectColor(_ hex: String) -> Color {
@@ -577,6 +401,205 @@ struct GoalEditor: View {
               dismiss()
             }
           }.disabled(goal.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+      }
+    }
+  }
+}
+
+struct LearningActionsCard: View {
+  @Environment(AppState.self) private var app
+  let goals: [LearningGoal]
+  var body: some View {
+    DashboardCard(title: "Key actions") {
+      let open = goals.filter { !$0.isCompleted }
+      if open.isEmpty { Text("No open learning goals.").foregroundStyle(.secondary) }
+      ForEach(open.prefix(3)) { goal in
+        Button {
+          var updated = goal
+          updated.isCompleted = true
+          app.perform { try app.store.upsertGoal(updated) }
+        } label: {
+          Label(goal.title, systemImage: "circle")
+        }.buttonStyle(.plain)
+      }
+    }
+  }
+}
+
+struct LearningDeadlinesCard: View {
+  let assignments: [Assignment]
+  var body: some View {
+    DashboardCard(title: "Upcoming deadlines") {
+      let upcoming = assignments.filter { ($0.dueDate ?? .distantPast) >= Date() }.sorted {
+        ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture)
+      }
+      if upcoming.isEmpty { Text("No upcoming deadlines entered.").foregroundStyle(.secondary) }
+      ForEach(upcoming.prefix(3)) { item in
+        NavigationLink {
+          AssignmentDetail(assignmentID: item.id)
+        } label: {
+          HStack(spacing: 12) {
+            if let date = item.dueDate {
+              VStack {
+                Text(date.formatted(.dateTime.day())).font(.headline)
+                Text(date.formatted(.dateTime.month(.abbreviated))).font(.caption)
+              }
+              .frame(width: 48, height: 48).background(
+                lavender, in: RoundedRectangle(cornerRadius: 12))
+            }
+            Text(item.title)
+          }
+        }.buttonStyle(.plain)
+      }
+    }
+  }
+}
+
+struct LearningOverview: View {
+  @Environment(\.horizontalSizeClass) private var sizeClass
+  let realSubjects: [Subject]
+  let assignments: [Assignment]
+  let goals: [LearningGoal]
+  var body: some View {
+    VStack(alignment: .leading, spacing: 20) {
+      Text("Your learning journey").font(
+        .custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
+        StatCard(
+          title: "Subjects", value: "\(realSubjects.count)", symbol: "BookIcon",
+          color: Color(red: 0.85, green: 0.92, blue: 0.89))
+        StatCard(
+          title: "Assignments", value: "\(assignments.count)", symbol: "CalendarIcon",
+          color: Color(red: 0.89, green: 0.85, blue: 0.93))
+        StatCard(
+          title: "With feedback",
+          value: "\(assignments.filter { !$0.tutorFeedback.isEmpty }.count)",
+          symbol: "FeedbackIcon", color: Color(red: 0.96, green: 0.92, blue: 0.82))
+        StatCard(
+          title: "Goals completed", value: "\(goals.filter(\.isCompleted).count) of \(goals.count)",
+          symbol: "GoalIcon", color: Color(red: 0.87, green: 0.91, blue: 0.89))
+      }
+      if sizeClass == .regular {
+        HStack(alignment: .top, spacing: 20) {
+          LearningProgressCard(realSubjects: realSubjects)
+          VStack(spacing: 20) {
+            LearningActionsCard(goals: goals)
+            LearningDeadlinesCard(assignments: assignments)
+          }.frame(maxWidth: 400)
+        }
+      } else {
+        LearningProgressCard(realSubjects: realSubjects)
+        LearningActionsCard(goals: goals)
+        LearningDeadlinesCard(assignments: assignments)
+      }
+    }
+  }
+}
+
+struct LearningProgressCard: View {
+  @Environment(AppState.self) private var app
+  let realSubjects: [Subject]
+  var body: some View {
+    DashboardCard(title: "Subject progress") {
+      HStack {
+        Text("See the marks you have entered so far.").foregroundStyle(.secondary)
+        Spacer()
+        Image("OverviewIllustration").resizable().scaledToFit().frame(width: 120)
+          .accessibilityHidden(true)
+      }
+      if realSubjects.isEmpty {
+        Text("Add a subject to see its progress.").foregroundStyle(.secondary)
+      }
+      ForEach(Array(realSubjects.enumerated()), id: \.element.id) { index, subject in
+        let marks = app.store.subjectMarks(subjectID: subject.id)
+        NavigationLink {
+          SubjectDetail(subjectID: subject.id)
+        } label: {
+          HStack(spacing: 12) {
+            Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.black).frame(
+              width: 32, height: 32
+            ).background(Color(red: 0.85, green: 0.92, blue: 0.89), in: Circle())
+            VStack(alignment: .leading, spacing: 6) {
+              Text(subject.name)
+              if let percentage = marks.percentage {
+                ProgressView(value: percentage, total: 100).tint(teal)
+              }
+            }
+            Text(
+              marks.percentage.map { "\($0.formatted(.number.precision(.fractionLength(2))))%" }
+                ?? "No marks"
+            ).font(.caption)
+          }
+        }.buttonStyle(.plain)
+      }
+    }
+  }
+}
+
+struct LearningSubjectList: View {
+  @Environment(AppState.self) private var app
+  let realSubjects: [Subject]
+  let assignments: [Assignment]
+  let filtered: [Subject]
+  @Binding var filter: String
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Subjects").font(
+        .custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+        DashboardCard(title: "Your subject performance") {
+          Text("\(realSubjects.count)").font(
+            .custom("Inter-Regular", size: 34, relativeTo: .largeTitle).weight(.bold))
+          Text("Subjects in this selection").font(.caption).foregroundStyle(.secondary)
+        }
+        DashboardCard(title: "Marks at a glance") {
+          Text("\(assignments.filter { $0.percentage != nil }.count) of \(assignments.count)").font(
+            .title2.bold())
+          Text("Assignments with marks entered").font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      Text("Marks are weighted within each subject by their available points.").font(.caption)
+        .foregroundStyle(.secondary)
+      Picker("Filter", selection: $filter) {
+        Text("All").tag("All")
+        Text("With feedback").tag("With feedback")
+        Text("With goals").tag("With goals")
+      }.pickerStyle(.menu)
+      DashboardCard(title: "Subjects") {
+        if filtered.isEmpty && !app.data.subjects.isEmpty {
+          Text("No matching subjects.").foregroundStyle(.secondary)
+        }
+        ForEach(filtered) { subject in
+          let marks = app.store.subjectMarks(subjectID: subject.id, includeDemo: subject.isDemo)
+          NavigationLink {
+            SubjectDetail(subjectID: subject.id)
+          } label: {
+            HStack(spacing: 14) {
+              RoundedRectangle(cornerRadius: 5).fill(subjectColor(subject.colorHex)).frame(width: 8)
+              VStack(alignment: .leading, spacing: 4) {
+                Text(subject.name).font(.headline)
+                Text("\(subject.code)\(subject.isDemo ? " • Sample" : "")").font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              Spacer()
+              VStack(alignment: .trailing, spacing: 4) {
+                Text(
+                  marks.percentage.map { "\($0.formatted(.number.precision(.fractionLength(2))))%" }
+                    ?? "Awaiting marks"
+                )
+                .font(.caption).padding(.horizontal, 10).padding(.vertical, 5).background(
+                  lavender, in: Capsule())
+                let total = app.data.assignments.filter { $0.subjectID == subject.id }.count
+                Text("\(marks.gradedCount) of \(total) graded").font(.caption2).foregroundStyle(
+                  .secondary)
+                if total > 0 {
+                  ProgressView(value: Double(marks.gradedCount), total: Double(total)).tint(teal)
+                    .frame(width: 80)
+                }
+              }
+            }.padding(.vertical, 6)
+          }.buttonStyle(.plain)
         }
       }
     }

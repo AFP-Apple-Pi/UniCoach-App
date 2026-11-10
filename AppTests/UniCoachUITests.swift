@@ -212,4 +212,106 @@ final class UniCoachUITests: XCTestCase {
     subjects.tap()
     attachScreenshot("Learning Subjects", app: app)
   }
+
+  func testMentorQuestionConsentResets() {
+    let app = XCUIApplication()
+    app.launchArguments.append("-ui-smoke")
+    app.launch()
+    let continueButton = app.buttons["profile.save"]
+    XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+    continueButton.tap()
+    app.tabBars.buttons["AI Mentor"].tap()
+    app.buttons["mentor.ask"].tap()
+    let starter = app.buttons["question.starter"]
+    XCTAssertTrue(starter.waitForExistence(timeout: 5))
+    starter.tap()
+    let preview = element(app, id: "question.preview")
+    XCTAssertTrue(preview.label.contains("How can I plan my study time?"))
+    let source = element(app, id: "question.source.progress")
+    chooseSwitch(source, in: app)
+    let approved = app.textViews["Approved text for Progress overview"]
+    guard reach(approved, in: app) else { return }
+    approved.tap()
+    approved.typeText(" synthetic edit")
+    XCTAssertTrue((approved.value as? String ?? "").contains("synthetic edit"))
+    attachScreenshot("Mentor question and context", app: app)
+    let done = app.buttons["question.keyboardDone"]
+    XCTAssertTrue(done.waitForExistence(timeout: 5))
+    done.tap()
+    let apple = element(app, id: "question.apple")
+    guard reach(apple, in: app) else { return }
+    XCTAssertEqual(apple.value as? String, "0")
+    let approve = app.buttons["question.approve"]
+    guard reach(approve, in: app) else { return }
+    XCTAssertFalse(approve.isEnabled)
+    guard reach(apple, in: app, up: false) else { return }
+    let nested = apple.switches.firstMatch
+    if nested.exists { nested.tap() } else { apple.tap() }
+    XCTAssertEqual(apple.value as? String, "1")
+    attachScreenshot("Mentor approval", app: app)
+    app.navigationBars.buttons["Close"].tap()
+    app.buttons["mentor.ask"].tap()
+    let question = element(app, id: "question.text")
+    XCTAssertTrue(question.waitForExistence(timeout: 5))
+    XCTAssertFalse((question.value as? String ?? "").contains("How can I plan"))
+    guard reach(source, in: app) else { return }
+    XCTAssertEqual(source.value as? String, "0")
+    guard reach(apple, in: app) else { return }
+    XCTAssertEqual(apple.value as? String, "0")
+    guard reach(approve, in: app) else { return }
+    XCTAssertFalse(approve.isEnabled)
+  }
+
+
+  func testSyntheticAppleQuestion() throws {
+    let app = XCUIApplication()
+    app.launchArguments.append("-ui-smoke")
+    app.launch()
+    let continueButton = app.buttons["profile.save"]
+    XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+    continueButton.tap()
+    app.tabBars.buttons["AI Mentor"].tap()
+    app.buttons["mentor.ask"].tap()
+    let starter = app.buttons["question.starter"]
+    XCTAssertTrue(starter.waitForExistence(timeout: 5))
+    starter.tap()
+    let apple = element(app, id: "question.apple")
+    guard reach(apple, in: app) else { return }
+    let availability = element(app, id: "question.availability")
+    XCTAssertTrue(availability.exists, "Missing model availability")
+    let status = availability.label
+    if status.contains("unavailable") || status.contains("requires") {
+      throw XCTSkip(status)
+    }
+    XCTAssertEqual(status, "Apple on-device model is available.")
+    XCTAssertEqual(apple.value as? String, "0")
+    let nested = apple.switches.firstMatch
+    if nested.exists { nested.tap() } else { apple.tap() }
+    let approve = app.buttons["question.approve"]
+    guard reach(approve, in: app) else { return }
+    XCTAssertTrue(approve.isEnabled)
+    approve.tap()
+    let savedHeader = app.staticTexts["Saved answer"]
+    XCTAssertTrue(savedHeader.waitForExistence(timeout: 90), "Apple request did not save: \(app.debugDescription)")
+    let saved = app.buttons["question.savedAnswer"]
+    guard reach(saved, in: app) else { return }
+    saved.tap()
+    let question = element(app, id: "answer.question")
+    XCTAssertTrue(question.waitForExistence(timeout: 5))
+    XCTAssertTrue(question.label.contains("How can I plan my study time?"))
+    let answer = element(app, id: "answer.text")
+    guard reach(answer, in: app) else { return }
+    XCTAssertFalse(answer.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    attachScreenshot("Saved Apple mentor answer", app: app)
+    let engine = element(app, id: "answer.engine")
+    guard reach(engine, in: app) else { return }
+    let engineDescription = engine.label + " " + (engine.value as? String ?? "")
+    XCTAssertTrue(engineDescription.contains("Apple on-device"), engineDescription)
+    let prompt = element(app, id: "answer.prompt")
+    guard reach(prompt, in: app) else { return }
+    XCTAssertEqual(
+      prompt.label,
+      "Question:\nHow can I plan my study time?\n\nNo approved context was included.")
+  }
+
 }

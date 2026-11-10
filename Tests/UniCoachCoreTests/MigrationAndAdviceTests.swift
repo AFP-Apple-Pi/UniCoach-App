@@ -16,6 +16,13 @@ final class MigrationAndAdviceTests: XCTestCase {
       XCTAssertEqual(try Data(contentsOf: url), bytes)
       XCTAssertEqual(store.data.schemaVersion, AppData.currentSchemaVersion)
       XCTAssertEqual(store.data.goals.count, 4)
+      XCTAssertTrue(store.data.mentorAnswers.isEmpty)
+      XCTAssertEqual(
+        store.data.goals.first { $0.title == "Degree goal" }?.id.uuidString,
+        "CCA262AE-4382-4D27-ACA2-62AE43828D27")
+      XCTAssertEqual(
+        store.data.goals.first { $0.title == "Subject goal" }?.id.uuidString,
+        "0A7E3843-FA5B-4A1C-AA7E-3843FA5B3A1C")
       XCTAssertEqual(store.data.assignments.first?.score, 72)
       XCTAssertEqual(store.data.assignments.first?.outOf, 100)
       XCTAssertNil(store.data.assignments.first?.createdAt)

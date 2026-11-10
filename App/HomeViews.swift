@@ -62,108 +62,50 @@ struct HomeScreen: View {
         if sizeClass == .regular {
           HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 20) {
-              journeyCard
-              stats
-              leftCards
+              JourneyCard(assignments: assignments, reflected: reflected)
+              HomeStatsCard(subjects: subjects, assignments: assignments, feedbackCount: feedbackCount, goals: goals)
+              HomeRecentCards(subjects: subjects, reports: reports)
             }
             .frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: 20) { rightCards }
+            VStack(alignment: .leading, spacing: 20) { HomeGoalCards(goals: goals) }
               .frame(maxWidth: 360)
           }
         } else {
-          journeyCard
-          stats
-          leftCards
-          rightCards
+          JourneyCard(assignments: assignments, reflected: reflected)
+          HomeStatsCard(subjects: subjects, assignments: assignments, feedbackCount: feedbackCount, goals: goals)
+          HomeRecentCards(subjects: subjects, reports: reports)
+          HomeGoalCards(goals: goals)
         }
       }.padding().frame(maxWidth: 1200)
     }.background(canvasColor).navigationTitle("Home").navigationBarTitleDisplayMode(.inline)
   }
-  private var stats: some View {
-    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
-      StatCard(
-        title: "Subjects", value: "\(subjects.count)", symbol: "BookIcon",
-        color: Color(red: 0.85, green: 0.92, blue: 0.89))
-      StatCard(
-        title: "Assignments", value: "\(assignments.count)", symbol: "CalendarIcon",
-        color: Color(red: 0.89, green: 0.85, blue: 0.93))
-      StatCard(
-        title: "With feedback", value: "\(feedbackCount)", symbol: "FeedbackIcon",
-        color: Color(red: 0.96, green: 0.92, blue: 0.82))
-      StatCard(
-        title: "Goals completed",
-        value: "\(goals.filter(\.isCompleted).count) of \(goals.count)", symbol: "GoalIcon",
-        color: Color(red: 0.87, green: 0.91, blue: 0.89))
-    }
+
+}
+
+struct StatCard: View {
+  let title: String
+  let value: String
+  let symbol: String
+  let color: Color
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(symbol).resizable().scaledToFit().frame(width: 20, height: 20).padding(8).background(
+        .white.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
+      VStack(alignment: .leading, spacing: 4) {
+        Text(value).font(.title3.bold())
+        Text(title).font(.caption)
+      }
+      Spacer(minLength: 0)
+    }.foregroundStyle(Color.black.opacity(0.85)).frame(
+      maxWidth: .infinity, minHeight: 78, alignment: .leading
+    ).padding(14).background(color, in: RoundedRectangle(cornerRadius: 20))
   }
-  private var leftCards: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      card(title: "Continue learning") {
-        if subjects.isEmpty {
-          Text("Add a subject to begin your learning journey.").foregroundStyle(.secondary)
-        }
-        ForEach(subjects.prefix(3)) { subject in
-          NavigationLink {
-            SubjectDetail(subjectID: subject.id)
-          } label: {
-            HStack {
-              Image(systemName: "book.closed").foregroundStyle(teal)
-              VStack(alignment: .leading) {
-                Text(subject.name)
-                Text(subject.code).font(.caption).foregroundStyle(.secondary)
-              }
-              Spacer()
-              Image(systemName: "chevron.right")
-            }.padding(.vertical, 5)
-          }.buttonStyle(.plain)
-        }
-      }
-      card(title: "Recent activity") {
-        if reports.isEmpty {
-          Text("Your saved feedback reviews will appear here.").foregroundStyle(.secondary)
-        }
-        ForEach(reports.prefix(3)) { report in
-          NavigationLink {
-            ReportDetail(report: report)
-          } label: {
-            VStack(alignment: .leading) {
-              Text("Feedback review saved")
-              Text(report.createdAt.formatted(date: .abbreviated, time: .shortened)).font(
-                .caption
-              ).foregroundStyle(.secondary)
-            }
-          }.buttonStyle(.plain)
-        }
-      }
-    }
-  }
-  private var rightCards: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      card(title: "Your next steps") {
-        if goals.filter({ !$0.isCompleted }).isEmpty {
-          Text("Choose a learning goal to plan your next step.").foregroundStyle(.secondary)
-        }
-        ForEach(goals.filter { !$0.isCompleted }.prefix(3)) { goal in
-          Button {
-            var updated = goal
-            updated.isCompleted = true
-            app.perform { try app.store.upsertGoal(updated) }
-          } label: {
-            Label(goal.title, systemImage: "circle")
-          }.buttonStyle(.plain)
-        }
-      }
-      coachCard
-      card(title: "Your learning goals") {
-        if goals.isEmpty { Text("No learning goals yet.").foregroundStyle(.secondary) }
-        ForEach(goals.prefix(3)) { goal in
-          Label(goal.title, systemImage: goal.isCompleted ? "checkmark.circle.fill" : "circle")
-        }
-        NavigationLink("View progress") { ProgressScreen() }.font(.subheadline.weight(.semibold))
-      }
-    }
-  }
-  private var journeyCard: some View {
+}
+
+struct JourneyCard: View {
+  let assignments: [Assignment]
+  let reflected: Int
+  var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text("Your learning journey").font(.subheadline.weight(.medium))
       Text(
@@ -195,7 +137,10 @@ struct HomeScreen: View {
     }
     .clipShape(RoundedRectangle(cornerRadius: 24))
   }
-  private var coachCard: some View {
+}
+
+struct CoachCard: View {
+  var body: some View {
     VStack(spacing: 12) {
       Text("Your AI Coach").font(.title2.bold())
       Text("Understand your feedback and plan your next steps.").multilineTextAlignment(.center)
@@ -215,64 +160,119 @@ struct HomeScreen: View {
     }
     .clipShape(RoundedRectangle(cornerRadius: 24))
   }
-  private func card<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View
-  {
+}
+
+struct HomeStatsCard: View {
+  let subjects: [Subject]
+  let assignments: [Assignment]
+  let feedbackCount: Int
+  let goals: [LearningGoal]
+  var body: some View {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
+      StatCard(
+        title: "Subjects", value: "\(subjects.count)", symbol: "BookIcon",
+        color: Color(red: 0.85, green: 0.92, blue: 0.89))
+      StatCard(
+        title: "Assignments", value: "\(assignments.count)", symbol: "CalendarIcon",
+        color: Color(red: 0.89, green: 0.85, blue: 0.93))
+      StatCard(
+        title: "With feedback", value: "\(feedbackCount)", symbol: "FeedbackIcon",
+        color: Color(red: 0.96, green: 0.92, blue: 0.82))
+      StatCard(
+        title: "Goals completed",
+        value: "\(goals.filter(\.isCompleted).count) of \(goals.count)", symbol: "GoalIcon",
+        color: Color(red: 0.87, green: 0.91, blue: 0.89))
+    }
+  }
+}
+
+struct HomeRecentCards: View {
+  let subjects: [Subject]
+  let reports: [MentorReport]
+  var body: some View {
+    VStack(alignment: .leading, spacing: 20) {
+      DashboardCard(title: "Continue learning") {
+        if subjects.isEmpty {
+          Text("Add a subject to begin your learning journey.").foregroundStyle(.secondary)
+        }
+        ForEach(subjects.prefix(3)) { subject in
+          NavigationLink {
+            SubjectDetail(subjectID: subject.id)
+          } label: {
+            HStack {
+              Image(systemName: "book.closed").foregroundStyle(teal)
+              VStack(alignment: .leading) {
+                Text(subject.name)
+                Text(subject.code).font(.caption).foregroundStyle(.secondary)
+              }
+              Spacer()
+              Image(systemName: "chevron.right")
+            }.padding(.vertical, 5)
+          }.buttonStyle(.plain)
+        }
+      }
+      DashboardCard(title: "Recent activity") {
+        if reports.isEmpty {
+          Text("Your saved feedback reviews will appear here.").foregroundStyle(.secondary)
+        }
+        ForEach(reports.prefix(3)) { report in
+          NavigationLink {
+            ReportDetail(report: report)
+          } label: {
+            VStack(alignment: .leading) {
+              Text("Feedback review saved")
+              Text(report.createdAt.formatted(date: .abbreviated, time: .shortened)).font(
+                .caption
+              ).foregroundStyle(.secondary)
+            }
+          }.buttonStyle(.plain)
+        }
+      }
+    }
+  }
+}
+
+struct HomeGoalCards: View {
+  @Environment(AppState.self) private var app
+  let goals: [LearningGoal]
+  var body: some View {
+    VStack(alignment: .leading, spacing: 20) {
+      DashboardCard(title: "Your next steps") {
+        if goals.filter({ !$0.isCompleted }).isEmpty {
+          Text("Choose a learning goal to plan your next step.").foregroundStyle(.secondary)
+        }
+        ForEach(goals.filter { !$0.isCompleted }.prefix(3)) { goal in
+          Button {
+            var updated = goal
+            updated.isCompleted = true
+            app.perform { try app.store.upsertGoal(updated) }
+          } label: {
+            Label(goal.title, systemImage: "circle")
+          }.buttonStyle(.plain)
+        }
+      }
+      CoachCard()
+      DashboardCard(title: "Your learning goals") {
+        if goals.isEmpty { Text("No learning goals yet.").foregroundStyle(.secondary) }
+        ForEach(goals.prefix(3)) { goal in
+          Label(goal.title, systemImage: goal.isCompleted ? "checkmark.circle.fill" : "circle")
+        }
+        NavigationLink("View progress") { ProgressScreen() }.font(.subheadline.weight(.semibold))
+      }
+    }
+  }
+}
+
+struct DashboardCard<Content: View>: View {
+  let title: String
+  @ViewBuilder let content: Content
+
+  var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text(title).font(.custom("Inter-Regular", size: 20, relativeTo: .title3).weight(.semibold))
-      content()
+      content
     }
     .frame(maxWidth: .infinity, alignment: .leading).padding(20).background(
       .background, in: RoundedRectangle(cornerRadius: 24))
-  }
-}
-
-struct StatCard: View {
-  let title: String
-  let value: String
-  let symbol: String
-  let color: Color
-  var body: some View {
-    HStack(alignment: .top, spacing: 10) {
-      Image(symbol).resizable().scaledToFit().frame(width: 20, height: 20).padding(8).background(
-        .white.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
-      VStack(alignment: .leading, spacing: 4) {
-        Text(value).font(.title3.bold())
-        Text(title).font(.caption)
-      }
-      Spacer(minLength: 0)
-    }.foregroundStyle(Color.black.opacity(0.85)).frame(
-      maxWidth: .infinity, minHeight: 78, alignment: .leading
-    ).padding(14).background(color, in: RoundedRectangle(cornerRadius: 20))
-  }
-}
-
-struct MentorLanding: View {
-  @Environment(AppState.self) private var app
-  @State private var chosen: Assignment?
-  var body: some View {
-    List {
-      Section {
-        Text(
-          "Choose an assignment, then review and approve the exact submitted work and feedback for this request."
-        ).foregroundStyle(.secondary)
-      }
-      Section("Assignments") {
-        if app.data.assignments.isEmpty {
-          Text("Add an assignment in My Learning to begin.").foregroundStyle(.secondary)
-        }
-        ForEach(app.data.assignments) { assignment in
-          Button {
-            chosen = assignment
-          } label: {
-            VStack(alignment: .leading) {
-              Text(assignment.title).font(.headline)
-              if let subject = app.data.subjects.first(where: { $0.id == assignment.subjectID }) {
-                Text(subject.name).font(.caption).foregroundStyle(.secondary)
-              }
-            }
-          }
-        }
-      }
-    }.navigationTitle("AI Coach").sheet(item: $chosen) { MentorView(assignmentID: $0.id) }
   }
 }

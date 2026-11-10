@@ -6,6 +6,7 @@ import Observation
   public private(set) var loadingError: String?
   public let fileURL: URL
   private var activeTickets: Set<GenerationTicket> = []
+  private var runningMentorAnswers: Set<GenerationTicket> = []
   private var approvedRequests: [UUID: ApprovedRequest] = [:]
   private var startedRequests: Set<UUID> = []
   private var sourceRevisions: [String: UInt64] = [:]
@@ -131,6 +132,11 @@ import Observation
   public func deleteReport(id: UUID) throws {
     var n = data
     n.reports.removeAll { $0.id == id }
+    try commit(n)
+  }
+  public func deleteMentorAnswer(id: UUID) throws {
+    var n = data
+    n.mentorAnswers.removeAll { $0.id == id }
     try commit(n)
   }
   @discardableResult public func addSampleSubject() throws -> Subject {
@@ -268,18 +274,28 @@ import Observation
     return sources
   }
   public func approve(draft: ConsentDraft, assignmentID: UUID? = nil) throws -> ApprovedRequest {
-    let q = draft.question.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !draft.selectedSources.isEmpty else { throw UniCoachError.noSources }
+    let trimmedQuestion = draft.question.trimmingCharacters(in: .whitespacesAndNewlines)
+    let question: String
+    switch draft.purpose {
+    case .feedbackReview:
+      guard !draft.selectedSources.isEmpty else { throw UniCoachError.noSources }
+      question = trimmedQuestion
+    case .mentorQuestion:
+      guard !trimmedQuestion.isEmpty else { throw UniCoachError.invalidQuestion }
+      guard draft.engine == .appleOnDevice else { throw UniCoachError.engineUnavailable }
+      question = draft.question
+    }
     guard
       draft.selectedSources.allSatisfy({
         !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       })
     else { throw UniCoachError.emptySource }
     guard
-      q.count + draft.selectedSources.reduce(0, { $0 + $1.text.count })
+      question.count + draft.selectedSources.reduce(0, { $0 + $1.text.count })
         <= Self.contextCharacterLimit
     else { throw UniCoachError.contextTooLong }
-    let current = Dictionary(uniqueKeysWithValues: contextSources().map { ($0.id, $0.fingerprint) })
+    let sources = draft.selectedSources.isEmpty ? [] : contextSources()
+    let current = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.fingerprint) })
     let approved = try draft.selectedSources.map { source -> ApprovedSource in
       guard let original = draft.originals[source.id], current[source.id] == original else {
         throw UniCoachError.sourceChanged
@@ -299,8 +315,8 @@ import Observation
       anchorFingerprint = nil
     }
     let request = ApprovedRequest(
-      question: q, engine: draft.engine, sources: approved, assignmentID: anchor,
-      assignmentFingerprint: anchorFingerprint)
+      question: question, engine: draft.engine, sources: approved, assignmentID: anchor,
+      assignmentFingerprint: anchorFingerprint, purpose: draft.purpose)
     approvedRequests[request.id] = request
     return request
   }
@@ -311,11 +327,12 @@ import Observation
           + String(assignmentRevisions[id, default: 0])
       else { throw UniCoachError.sourceChanged }
     }
+    if request.sources.isEmpty {
+      guard request.purpose == .mentorQuestion else { throw UniCoachError.sourceChanged }
+      return
+    }
     let current = Dictionary(uniqueKeysWithValues: contextSources().map { ($0.id, $0.fingerprint) })
-    guard !request.sources.isEmpty,
-      request.sources.allSatisfy({ source in
-        current[source.id].map { $0 == source.originalFingerprint } ?? false
-      })
+    guard request.sources.allSatisfy({ current[$0.id] == $0.originalFingerprint })
     else { throw UniCoachError.sourceChanged }
   }
   /// Passage offsets and lengths use UTF-16, matching NSRange and text selection APIs.
@@ -539,7 +556,12 @@ import Observation
     guard approvedRequests[request.id] == request, !startedRequests.contains(request.id) else {
       throw UniCoachError.cancelled
     }
-    try validateCurrent(request)
+    do {
+      try validateCurrent(request)
+    } catch {
+      approvedRequests.removeValue(forKey: request.id)
+      throw error
+    }
     startedRequests.insert(request.id)
     let ticket = GenerationTicket(requestID: request.id)
     activeTickets.insert(ticket)
@@ -551,8 +573,45 @@ import Observation
       startedRequests.remove(ticket.requestID)
     }
   }
+  @discardableResult public func generateMentorAnswer(
+    request: ApprovedRequest, ticket: GenerationTicket,
+    using appleGenerator: @MainActor (MentorQuestionInput) async throws -> String
+  ) async throws -> MentorAnswer {
+    guard request.purpose == .mentorQuestion, request.engine == .appleOnDevice else {
+      throw UniCoachError.engineUnavailable
+    }
+    guard ticket.requestID == request.id, approvedRequests[request.id] == request,
+      activeTickets.contains(ticket), runningMentorAnswers.insert(ticket).inserted
+    else { throw UniCoachError.cancelled }
+    defer {
+      runningMentorAnswers.remove(ticket)
+      cancel(ticket: ticket)
+    }
+    try Task.checkCancellation()
+    try validateCurrent(request)
+
+    let input = MentorQuestionInput(request: request)
+    let answer = try await appleGenerator(input)
+    try Task.checkCancellation()
+    guard activeTickets.contains(ticket) else { throw UniCoachError.cancelled }
+    try validateCurrent(request)
+    guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw UniCoachError.emptyAnswer
+    }
+
+    let saved = MentorAnswer(
+      id: UUID(), createdAt: Date(), question: request.question, engine: request.engine,
+      sources: request.sources, assignmentID: request.assignmentID,
+      instructionsSnapshot: input.instructions, promptSnapshot: input.prompt, answer: answer)
+    var n = data
+    n.mentorAnswers.insert(saved, at: 0)
+    try commit(n)
+    return saved
+  }
   public func generateOffline(request: ApprovedRequest) throws -> MentorOutput {
-    guard request.engine == .contextualOffline else { throw UniCoachError.engineUnavailable }
+    guard request.purpose == .feedbackReview, request.engine == .contextualOffline else {
+      throw UniCoachError.engineUnavailable
+    }
     guard !request.sources.isEmpty else { throw UniCoachError.noSources }
     let passages = evidencePassages(request: request)
     let hasWork = passages.contains { $0.sourceID.hasSuffix(":work") }
@@ -594,6 +653,7 @@ import Observation
     request: ApprovedRequest, output: MentorOutput, ticket: GenerationTicket,
     instructionsSnapshot: String? = nil, promptSnapshots: [String] = []
   ) throws -> MentorReport {
+    guard request.purpose == .feedbackReview else { throw UniCoachError.cancelled }
     guard ticket.requestID == request.id, approvedRequests[request.id] == request,
       activeTickets.contains(ticket), !Task.isCancelled
     else {

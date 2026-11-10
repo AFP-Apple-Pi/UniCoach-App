@@ -51,3 +51,32 @@ On 9 November 2026, the Figma/Maria revision passed 24 core tests and a signed b
 Apple's on-device model was available. A manual request selected and approved only synthetic submitted work and tutor feedback. The first generated response failed evidence validation and was not saved; there was no engine fallback. A second explicitly approved request saved an Apple on-device report containing keep-doing and improvement advice, exact tutor sentence quotes, paired work excerpts and a concrete next step. Exact-source validation does not guarantee the model's interpretation or causal reasoning.
 
 After verification, the app was launched normally. Its normal data file was verified byte-for-byte unchanged against a protected pre-update backup without displaying private contents. Tests used only `ui-smoke.json`. The `-ui-smoke-preserve` launch argument opens that isolated store without resetting it for manual inspection; normal launch uses `data.json`.
+
+## SwiftAgents review and Apple AI Mentor questions (10 November 2026)
+
+The AI Mentor tab now offers **Ask your mentor** alongside assignment feedback reviews. The question flow uses Apple's on-device Foundation Models engine only. Context is optional and starts unselected; every request requires an explicit Apple AI choice and approval. A fresh model session receives only the approved question and context, with no previous conversation. Without context, the answer is general study guidance. Answers retain the exact prompt, instructions, approved source titles and text, and can be deleted from local history.
+
+The review added compiler guards around Foundation Models, localized search, safe optional handling, migration UUID construction without force unwraps, reusable dashboard views and shared cards. The iOS 17 deployment target, Swift language mode, Figma layout, local signing configuration and existing learning logic remain unchanged. Debug builds now use the selected device architecture so app and local Swift package simulator slices agree.
+
+Compatibility decisions: the older tab API and array-backed enumerated lists remain for iOS 17. Background-only GeometryReader sizing retains the Figma illustration crop. The original dynamic palette and native grouped canvas color remain adaptive; a named-color conversion was reverted after screenshot review exposed unreadable tint. Newer APIs are not adopted at the cost of supported devices or approved design behavior.
+
+For a live model check, use only synthetic data in the isolated UI test store:
+
+1. Open AI Mentor, then Ask your mentor. Confirm the question, source selections and Apple AI toggle start empty/off.
+2. Inspect the model availability message. On eligible iOS 26 or newer hardware, enable Apple Intelligence and allow its model to finish downloading if needed.
+3. Enter a synthetic study question. Optionally select synthetic context, edit the exact approved text, then explicitly enable Apple AI and approve the request.
+4. Inspect the saved answer's engine, question, source snapshots and exact model request. Check the answer against the approved text. Model interpretation is not independently validated.
+5. Start and cancel another request. Reopen the screen and confirm fresh consent is required. Verify saved answers remain readable after source edits/deletion, and that deleting an answer removes only that answer and its snapshots.
+
+Live Apple model generation for this new question flow has not yet been verified on a physical iPhone. Earlier hardware results above apply to the assignment-report flow only.
+
+Validation for this revision used Xcode 27.2:
+
+- All 34 core tests passed, including 10 new mentor-question tests. The tested package, source and test files matched the applied checkout byte-for-byte.
+- The iOS device build passed with signing disabled. Bundle identifier and personal signing overrides were not changed.
+- All three UI cases passed on the iPhone 17 simulator running iOS 27.2, across the final consent/offline run and the corrected Apple test rerun. Consent reset took 30.026 seconds; the existing assignment/marks/offline-advice/goal regression took 114.966 seconds. The real Apple question test passed in 27.522 seconds and was not skipped.
+- The Apple test explicitly approved a synthetic question without private context, generated a real answer, and verified its saved Apple engine and exact question-only prompt. It uses no model stub. An initial test assertion was corrected to scroll to the saved-answer link in the lazy form.
+- Astra reviewed the resulting mentor, Home, Overview and Subjects screenshots. Readable tint and the approved dashboard layout were verified.
+- SwiftLint was not installed. No Swift compiler errors or warnings were reported; Xcode emitted its expected AppIntents metadata-skip warning because the app has no AppIntents dependency.
+
+These simulator results verify the new Foundation Models integration, not its behavior on a physical iPhone. No existing private uploads or normal app data were used for these tests.

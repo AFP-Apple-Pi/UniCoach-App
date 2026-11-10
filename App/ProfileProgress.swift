@@ -112,8 +112,7 @@ struct ProgressScreen: View {
     Array(
       Set(
         subjects.map {
-          $0.semester?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? $0.semester! : "Unspecified semester"
+          semesterName($0.semester)
         })
     ).sorted()
   }
@@ -156,8 +155,7 @@ struct ProgressScreen: View {
         Section(semester) {
           ForEach(
             subjects.filter {
-              ($0.semester?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? $0.semester! : "Unspecified semester") == semester
+              semesterName($0.semester) == semester
                 && (selectedSubject == nil || $0.id == selectedSubject)
             }
           ) { subject in
@@ -279,4 +277,11 @@ struct ProgressScreen: View {
     }
   }
 
+}
+
+private func semesterName(_ semester: String?) -> String {
+  guard let semester, !semester.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    return "Unspecified semester"
+  }
+  return semester
 }
