@@ -486,10 +486,12 @@ public struct MentorReport: Codable, Identifiable, Equatable {
   public let assignmentID: UUID?
   public let instructionsSnapshot: String?
   public let promptSnapshots: [String]
+  public let processingSteps: [ModelProcessingStep]?
   public init(
     id: UUID = UUID(), createdAt: Date = Date(), question: String, engine: MentorEngine,
     sources: [ApprovedSource], output: MentorOutput, assignmentID: UUID? = nil,
-    instructionsSnapshot: String? = nil, promptSnapshots: [String] = []
+    instructionsSnapshot: String? = nil, promptSnapshots: [String] = [],
+    processingSteps: [ModelProcessingStep]? = nil
   ) {
     self.id = id
     self.createdAt = createdAt
@@ -500,10 +502,11 @@ public struct MentorReport: Codable, Identifiable, Equatable {
     self.assignmentID = assignmentID
     self.instructionsSnapshot = instructionsSnapshot
     self.promptSnapshots = promptSnapshots
+    self.processingSteps = processingSteps
   }
   private enum CodingKeys: String, CodingKey {
     case id, createdAt, question, engine, sources, output, assignmentID, instructionsSnapshot,
-      promptSnapshots
+      promptSnapshots, processingSteps
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -516,6 +519,7 @@ public struct MentorReport: Codable, Identifiable, Equatable {
     assignmentID = try c.decodeIfPresent(UUID.self, forKey: .assignmentID)
     instructionsSnapshot = try c.decodeIfPresent(String.self, forKey: .instructionsSnapshot)
     promptSnapshots = try c.decodeIfPresent([String].self, forKey: .promptSnapshots) ?? []
+    processingSteps = try c.decodeIfPresent([ModelProcessingStep].self, forKey: .processingSteps)
   }
 }
 public struct AppData: Codable, Equatable {
@@ -644,9 +648,10 @@ public struct GenerationTicket: Hashable {
 }
 public enum UniCoachError: LocalizedError, Equatable {
   case invalidQuestion, noSources, emptySource, contextTooLong, sourceChanged, invalidEvidence,
-    cancelled, invalidRelationship, invalidGrade, engineUnavailable, emptyAnswer
+    cancelled, invalidRelationship, invalidGrade, engineUnavailable, emptyAnswer, contextProcessingFailed
   public var errorDescription: String? {
     switch self {
+    case .contextProcessingFailed: return "The approved material could not be processed within the on-device model limits. Try a smaller request."
     case .invalidQuestion: return "Enter a question for your mentor."
     case .noSources: return "Select at least one source."
     case .emptySource: return "Selected sources must contain approved text."

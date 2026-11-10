@@ -18,11 +18,11 @@ Open the AI Mentor tab and choose **New conversation**. Enter a study question o
 
 Type your reply and tap **Approve conversation and send**. That action approves the visible conversation messages and your reply for Apple on-device processing. Expand **Review exact conversation history** to inspect the transcript. Earlier private source snapshots are not automatically reused, although previous messages may quote or discuss them. To select different private source material, start a new conversation.
 
-The conversation and reply must fit within the app's 6,000-character request limit. When the limit is reached, shorten the reply or start a new conversation. Earlier turns are never silently removed.
+The question, selected source text and approved conversation history together can contain up to 50,000 characters. Requests that fit the device model run directly. Longer requests are processed in sections on the device, then combined through summaries before the final answer. Every approved part is processed, but summaries can miss details. Progress and cancellation remain available, and the full approved text and actual processing steps are retained for inspection. Nothing is silently cut off.
 
 Apple Intelligence generation uses the on-device Foundation Models system model. Build with Xcode 26 or newer; generation requires iOS 26 or later, eligible hardware, Apple Intelligence enabled, and a ready model. The app displays the availability reason and disables generation when unavailable. It never silently switches engines or uploads a request.
 
-Conversations are saved locally and can be reopened under **Saved conversations**. Older saved answers open as one-turn conversations that you can continue. Each turn's **Request details** retains its approved question, source snapshots, conversation snapshot and exact model request. Swipe a saved conversation to delete all its turns and snapshots after confirmation.
+Conversations are saved locally and can be reopened under **Saved conversations**. Older saved answers open as one-turn conversations that you can continue. Each turn's **Request details** retains its approved question, source snapshots, conversation snapshot and processing record. For long requests, the original approved request is distinguished from the smaller prompts actually sent to the model. Swipe a saved conversation to delete all its turns and snapshots after confirmation.
 
 Cancelled requests, deleted or changed conversations, and changed selected sources cannot save a late answer. Each retry requires a new approval. New conversations start with no previous history, source selection or Apple consent.
 

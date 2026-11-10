@@ -1,6 +1,3 @@
-#if compiler(>=6.2) && canImport(FoundationModels)
-import FoundationModels
-#endif
 import SwiftUI
 import UniCoachCore
 
@@ -41,7 +38,7 @@ struct MentorLanding: View {
               Text(conversation.updatedAt, format: .dateTime.month().day())
                 .font(.caption)
             } label: {
-              Text(conversation.question)
+              Text(conversation.question).lineLimit(2)
             }
           }
           .accessibilityIdentifier("mentor.conversation")
@@ -151,6 +148,7 @@ private struct MentorSessionView: View {
 private struct MentorQuestionView: View {
   @Environment(AppState.self) private var app
   @Environment(\.scenePhase) private var scenePhase
+  @ScaledMetric(relativeTo: .body) private var approvedTextHeight: CGFloat = 140
   @State private var availabilityRevision = 0
   @State private var draft = ConsentDraft(purpose: .mentorQuestion)
   @FocusState private var focusedField: String?
@@ -179,6 +177,7 @@ private struct MentorQuestionView: View {
     Form {
       Section("1. Your question") {
         TextField("What would you like help with?", text: $draft.question, axis: .vertical)
+          .lineLimit(2...6)
           .focused($focusedField, equals: "question")
           .accessibilityIdentifier("question.text")
         Text("Try a starter, then edit it to make it your own.")
@@ -208,8 +207,9 @@ private struct MentorQuestionView: View {
       }.disabled(running)
       Section("3. Review exact request") {
         Text("Question").font(.headline)
-        Text(draft.question.isEmpty ? "Enter a question above." : draft.question)
-          .textSelection(.enabled).accessibilityIdentifier("question.preview")
+        MentorSnapshotText(
+          title: "Show full question", text: draft.question.isEmpty ? "Enter a question above." : draft.question,
+          identifier: "question.preview")
         if draft.selectedSources.isEmpty {
           Text("No private context selected.").foregroundStyle(.secondary)
         }
@@ -222,10 +222,10 @@ private struct MentorQuestionView: View {
             ))
             .focused($focusedField, equals: source.id)
             .accessibilityLabel("Approved text for " + source.title)
-            .frame(minHeight: 100)
+            .frame(height: approvedTextHeight)
           }
         }
-        Text("Your question and selected text are limited to 6,000 characters. Nothing is silently omitted.")
+        Text("Your question and selected text are limited to \(UniCoachStore.contextCharacterLimit.formatted()) characters.")
           .font(.caption).foregroundStyle(.secondary)
       }.disabled(running)
       Section("4. Choose Apple on-device AI") {
@@ -235,8 +235,10 @@ private struct MentorQuestionView: View {
           .accessibilityIdentifier("question.apple")
         Text("The answer may be inaccurate. Check it before relying on it.")
           .font(.caption).foregroundStyle(.secondary)
+        MentorLargeContextNotice()
       }.disabled(running)
       Section {
+        if let progress = request.processingProgress, running { ProgressView(progress) }
         Button(running ? "Working..." : "Approve and ask") { start() }
           .accessibilityIdentifier("question.approve")
           .disabled(running || !selectedApple || !modelAvailable()
@@ -294,9 +296,7 @@ private struct MentorConversationView: View {
                 .disabled(request.running)
             }
             DisclosureGroup("Review exact conversation history") {
-              Text(history.transcript)
-                .textSelection(.enabled)
-                .accessibilityIdentifier("conversation.history")
+              MentorScrollableSnapshot(text: history.transcript, identifier: "conversation.history")
             }
           }
           .scrollTargetLayout()
@@ -309,7 +309,7 @@ private struct MentorConversationView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
           MentorReplyComposer(
             reply: $reply, historyLength: history.transcript.count, running: request.running,
-            available: modelAvailable(), availabilityMessage: modelAvailability(),
+            processingProgress: request.processingProgress, available: modelAvailable(), availabilityMessage: modelAvailability(),
             availabilityRevision: availabilityRevision,
             onApprove: { send(approving: history) },
             onCancel: { request.cancel(in: app.store) })
@@ -351,9 +351,8 @@ private struct MentorConversationTurnView: View {
     VStack(alignment: .leading) {
       VStack(alignment: .leading) {
         Text("You").font(.caption).foregroundStyle(.secondary)
-        Text(answer.question)
-          .textSelection(.enabled)
-          .accessibilityIdentifier("conversation.question.\(index)")
+        MentorSnapshotText(
+          title: "Show full question", text: answer.question, identifier: "conversation.question.\(index)")
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding()
@@ -377,6 +376,7 @@ private struct MentorReplyComposer: View {
   @FocusState private var focused: Bool
   let historyLength: Int
   let running: Bool
+  let processingProgress: String?
   let available: Bool
   let availabilityMessage: String
   let availabilityRevision: Int
@@ -401,8 +401,9 @@ private struct MentorReplyComposer: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .accessibilityIdentifier("conversation.disclosure")
+      MentorLargeContextNotice()
       if limitReached {
-        Text("Conversation and reply must fit within 6,000 characters. Shorten your reply or start a new conversation to ask without this history.")
+        Text("Conversation and reply must fit within \(UniCoachStore.contextCharacterLimit.formatted()) characters. Shorten your reply or start a new conversation to ask without this history.")
           .font(.caption)
           .accessibilityIdentifier("conversation.limit")
       }
@@ -413,7 +414,7 @@ private struct MentorReplyComposer: View {
           .accessibilityIdentifier("conversation.availability")
       }
       if running {
-        ProgressView("Waiting for your mentor...")
+        ProgressView(processingProgress ?? "Waiting for your mentor...")
         Button("Cancel request", role: .cancel, action: onCancel)
       } else {
         Button("Approve conversation and send") {
@@ -441,6 +442,7 @@ private final class MentorQuestionRequest {
   private var task: Task<Void, Never>?
   private var ticket: GenerationTicket?
   var message: String?
+  private(set) var processingProgress: String?
   var running: Bool { ticket != nil }
 
   func cancel(in store: UniCoachStore) {
@@ -448,6 +450,7 @@ private final class MentorQuestionRequest {
     if let ticket { store.cancel(ticket: ticket) }
     ticket = nil
     task = nil
+    processingProgress = nil
   }
 
   func start(
@@ -464,14 +467,22 @@ private final class MentorQuestionRequest {
           if ticket == generation {
             ticket = nil
             task = nil
+            processingProgress = nil
           }
         }
         do {
-          let answer = try await store.generateMentorAnswer(request: request, ticket: generation) { input in
+          let answer = try await store.generateProcessedMentorAnswer(
+            request: request, ticket: generation
+          ) { input in
             #if compiler(>=6.2) && canImport(FoundationModels)
-            if #available(iOS 26.0, *), SystemLanguageModel.default.isAvailable {
-              let session = LanguageModelSession(instructions: input.instructions)
-              return try await session.respond(to: input.prompt).content
+            if #available(iOS 26.0, *) {
+              return try await generateAppleAnswer(
+                input: input,
+                checkCurrent: { try store.validateGeneration(request: request, ticket: generation) },
+                progress: { progress in
+                  guard ticket == generation else { return }
+                  processingProgress = progress
+                })
             }
             #endif
             throw UniCoachError.engineUnavailable
@@ -496,7 +507,9 @@ struct MentorAnswerDetail: View {
   let answer: MentorAnswer
   var body: some View {
     List {
-      Section("Your question") { Text(answer.question).textSelection(.enabled).accessibilityIdentifier("answer.question") }
+      Section("Your question") {
+        MentorSnapshotText(title: "Show full question", text: answer.question, identifier: "answer.question")
+      }
       Section("Answer") {
         Text(answer.answer).textSelection(.enabled).accessibilityIdentifier("answer.text")
         Text("Check the mentor’s answer and any approved sources before relying on it.")
@@ -511,14 +524,19 @@ struct MentorAnswerDetail: View {
         ForEach(answer.sources) { source in
           VStack(alignment: .leading) {
             Text(source.title).font(.headline)
-            Text(source.text).textSelection(.enabled)
+            MentorSnapshotText(
+              title: "Show approved text", text: source.text, identifier: "answer.source." + source.id)
           }
         }
       }
-      Section("Model request snapshot") {
+      Section(answer.processingSteps?.contains { $0.kind == .chunk } == true
+        ? "Full approved request" : "Model request snapshot")
+      {
         Text(answer.instructionsSnapshot).textSelection(.enabled)
-        Text(answer.promptSnapshot).textSelection(.enabled).accessibilityIdentifier("answer.prompt")
+        MentorSnapshotText(
+          title: "Show full prompt", text: answer.promptSnapshot, identifier: "answer.prompt")
       }
+      if let steps = answer.processingSteps, !steps.isEmpty { MentorProcessingAudit(steps: steps) }
     }.navigationTitle("Mentor answer")
   }
 }

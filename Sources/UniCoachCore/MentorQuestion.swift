@@ -3,8 +3,10 @@ import Foundation
 public struct MentorQuestionInput {
   public let instructions: String
   public let prompt: String
+  public let currentQuestion: String
 
   init(request: ApprovedRequest) {
+    currentQuestion = request.question
     instructions = """
       You are UniCoach, a study mentor. Answer the student's question directly and suggest practical next steps where useful.
       Use only the explicitly approved conversation and context supplied with this request. Use supplied conversation details when relevant.
@@ -55,5 +57,6 @@ public struct MentorAnswer: Codable, Equatable, Identifiable {
   public let answer: String
   public let conversationID: UUID?
   public let approvedConversation: MentorConversationSnapshot?
+  public let processingSteps: [ModelProcessingStep]?
   public var threadID: UUID { conversationID ?? id }
 }

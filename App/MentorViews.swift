@@ -72,6 +72,7 @@ func modelAvailable() -> Bool {
 struct MentorView: View {
   @Environment(AppState.self) private var app
   @Environment(\.dismiss) private var dismiss
+  @ScaledMetric(relativeTo: .body) private var approvedTextHeight: CGFloat = 140
   let assignmentID: UUID
   @State private var draft = ConsentDraft()
   @State private var engine: MentorEngine?
@@ -79,6 +80,7 @@ struct MentorView: View {
   @State private var task: Task<Void, Never>?
   @State private var ticket: GenerationTicket?
   @State private var message: String?
+  @State private var processingProgress: String?
   @State private var report: MentorReport?
 
   private var sources: [ContextSource] { app.store.contextSources(assignmentID: assignmentID) }
@@ -128,15 +130,16 @@ struct MentorView: View {
                   )
                 )
                 .accessibilityLabel("Approved text for " + source.title)
-                .frame(minHeight: 100)
+                .frame(height: approvedTextHeight)
               }
             }
           }.disabled(running)
         }
         Section("3. Your question (optional)") {
           TextField("What would you like help with?", text: $draft.question, axis: .vertical)
+            .lineLimit(2...6)
           Text(
-            "Your question and selected text are limited to 6,000 characters. Nothing is silently omitted."
+            "Your question and selected text are limited to \(UniCoachStore.contextCharacterLimit.formatted()) characters."
           )
           .font(.caption).foregroundStyle(.secondary)
         }.disabled(running)
@@ -151,8 +154,10 @@ struct MentorView: View {
             "The offline option classifies feedback by keywords. It is not AI and can miss or misclassify feedback."
           )
           .font(.caption).foregroundStyle(.secondary)
+          if engine == .appleOnDevice { MentorLargeContextNotice() }
         }.disabled(running)
         Section {
+          if let processingProgress, running { ProgressView(processingProgress) }
           Button(running ? "Working..." : "Approve and create report") { start() }
             .accessibilityIdentifier("mentor.approve")
             .disabled(
@@ -191,6 +196,7 @@ struct MentorView: View {
     if let ticket { app.store.cancel(ticket: ticket) }
     ticket = nil
     running = false
+    processingProgress = nil
     draft = ConsentDraft()
     engine = nil
   }
@@ -203,22 +209,31 @@ struct MentorView: View {
       let generation = try app.store.beginGeneration(for: request)
       ticket = generation
       running = true
+      processingProgress = nil
       task = Task { @MainActor in
         do {
           let output: MentorOutput
           var prompt: String?
+          var processingSteps: [ModelProcessingStep] = []
           if request.engine == .contextualOffline {
             output = try app.store.generateOffline(request: request)
           } else {
             #if compiler(>=6.2) && canImport(FoundationModels)
             if #available(iOS 26.0, *) {
-            let passages =
-              app.store.evidencePassages(request: request).filter { $0.sourceID.hasSuffix(":work") }
-              + app.store.feedbackSentencePassages(request: request)
-            let exactPrompt = jointPrompt(request: request, passages: passages)
-            prompt = exactPrompt
-            output = try await generateApple(
-              request, passages: passages, prompt: exactPrompt, store: app.store)
+              let passages =
+                app.store.evidencePassages(request: request).filter { $0.sourceID.hasSuffix(":work") }
+                + app.store.feedbackSentencePassages(request: request)
+              let exactPrompt = jointPrompt(request: request, passages: passages)
+              prompt = exactPrompt
+              let generated = try await generateApple(
+                request, passages: passages, prompt: exactPrompt, store: app.store,
+                ticket: generation
+              ) { progress in
+                guard ticket?.id == generation.id else { return }
+                processingProgress = progress
+              }
+              output = generated.output
+              processingSteps = generated.steps
             } else {
               throw UniCoachError.engineUnavailable
             }
@@ -231,9 +246,10 @@ struct MentorView: View {
           report = try app.store.saveReport(
             request: request, output: output, ticket: generation,
             instructionsSnapshot: prompt == nil ? nil : mentorInstructions,
-            promptSnapshots: prompt.map { [$0] } ?? [])
+            promptSnapshots: prompt.map { [$0] } ?? [], processingSteps: processingSteps)
           ticket = nil
           running = false
+          processingProgress = nil
           draft = ConsentDraft()
           self.engine = nil
         } catch is CancellationError {
@@ -241,6 +257,7 @@ struct MentorView: View {
           if ticket?.id == generation.id {
             ticket = nil
             running = false
+            processingProgress = nil
             draft = ConsentDraft()
             self.engine = nil
           }
@@ -249,6 +266,8 @@ struct MentorView: View {
           if ticket?.id == generation.id {
             ticket = nil
             running = false
+            processingProgress = nil
+            self.engine = nil
             message =
               error.localizedDescription
               + " Review your selection and try again with less text if needed."
@@ -256,6 +275,7 @@ struct MentorView: View {
         }
       }
     } catch {
+      self.engine = nil
       message =
         error.localizedDescription
         + " Review or shorten the selected text, then approve a new request."
@@ -308,15 +328,188 @@ func jointPrompt(request: ApprovedRequest, passages: [EvidencePassage]) -> Strin
 
 #if compiler(>=6.2) && canImport(FoundationModels)
 @available(iOS 26.0, *)
+@MainActor final class AppleMentorModel {
+  private let model = SystemLanguageModel.default
+  private let checkCurrent: @MainActor () throws -> Void
+  private var instructionCounts: [String: Int] = [:]
+  private var reviewSchemaCount: Int?
+  static let answerBudget = 700
+  static let reviewBudget = 900
+  private static let framingBudget = 256
+
+  init(checkCurrent: @escaping @MainActor () throws -> Void) {
+    self.checkCurrent = checkCurrent
+  }
+
+  // Older OS versions cannot measure the token cost of adding the schema to the prompt.
+  // Guided decoding still uses the schema when the prompt omits its duplicate representation.
+  private var includesSchemaInPrompt: Bool {
+    #if compiler(>=6.3)
+    if #available(iOS 26.4, *) { return true }
+    #endif
+    return false
+  }
+
+  func fits(
+    instructions: String, prompt: String, responseBudget: Int, structured: Bool = false
+  ) async throws -> Bool {
+    guard model.isAvailable else { throw UniCoachError.engineUnavailable }
+    #if compiler(>=6.3)
+    if #available(iOS 26.4, *) {
+      let instructionCount: Int
+      if let cached = instructionCounts[instructions] {
+        instructionCount = cached
+      } else {
+        instructionCount = try await measure { try await model.tokenCount(for: Instructions(instructions)) }
+        instructionCounts[instructions] = instructionCount
+      }
+      var schemaCount = 0
+      if structured {
+        if let cached = reviewSchemaCount {
+          schemaCount = cached
+        } else {
+          schemaCount = try await measure { try await model.tokenCount(for: GeneratedReview.generationSchema) }
+          reviewSchemaCount = schemaCount
+        }
+      }
+      let promptCount = try await measure { try await model.tokenCount(for: Prompt(prompt)) }
+      return instructionCount + promptCount + schemaCount + responseBudget + Self.framingBudget
+        <= model.contextSize
+    }
+    #endif
+    // A UTF-8 byte per token is a conservative fallback when token counting is unavailable.
+    return instructions.utf8.count + prompt.utf8.count + responseBudget + Self.framingBudget <= 4_096
+  }
+
+  private func measure(_ count: () async throws -> Int) async throws -> Int {
+    try checkCurrent()
+    let result: Int
+    do { result = try await count() }
+    catch {
+      try checkCurrent()
+      throw error
+    }
+    try checkCurrent()
+    return result
+  }
+
+  func text(instructions: String, prompt: String, responseBudget: Int) async throws -> String {
+    try checkCurrent()
+    guard model.isAvailable else { throw UniCoachError.engineUnavailable }
+    let session = LanguageModelSession(model: model, instructions: instructions)
+    let output: String
+    do {
+      output = try await session.respond(
+        to: prompt, options: GenerationOptions(maximumResponseTokens: responseBudget)).content
+    } catch {
+      try checkCurrent()
+      throw modelError(error)
+    }
+    try checkCurrent()
+    return output
+  }
+
+  func review(
+    instructions: String, prompt: String, responseBudget: Int
+  ) async throws -> (content: GeneratedReview, output: String, schema: String) {
+    try checkCurrent()
+    guard model.isAvailable else { throw UniCoachError.engineUnavailable }
+    let schema = String(decoding: try JSONEncoder().encode(GeneratedReview.generationSchema), as: UTF8.self)
+    let session = LanguageModelSession(model: model, instructions: instructions)
+    let response: LanguageModelSession.Response<GeneratedReview>
+    do {
+      response = try await session.respond(
+        to: prompt, generating: GeneratedReview.self, includeSchemaInPrompt: includesSchemaInPrompt,
+        options: GenerationOptions(maximumResponseTokens: responseBudget))
+    } catch {
+      try checkCurrent()
+      throw modelError(error)
+    }
+    try checkCurrent()
+    return (response.content, response.rawContent.jsonString, schema)
+  }
+
+  private func modelError(_ error: Error) -> Error {
+    #if compiler(>=6.4)
+    if #available(iOS 27.0, *), let failure = error as? LanguageModelError,
+      case .contextSizeExceeded = failure
+    {
+      return UniCoachError.contextProcessingFailed
+    }
+    #endif
+    if let failure = error as? LanguageModelSession.GenerationError,
+      case .exceededContextWindowSize = failure
+    {
+      return UniCoachError.contextProcessingFailed
+    }
+    return error
+  }
+}
+
+@available(iOS 26.0, *)
+@MainActor func generateAppleAnswer(
+  input: MentorQuestionInput, checkCurrent: @escaping @MainActor () throws -> Void,
+  progress: @MainActor (String) -> Void
+) async throws -> MentorGenerationResult {
+  let model = AppleMentorModel(checkCurrent: checkCurrent)
+  let budget = AppleMentorModel.answerBudget
+  let prepared = try await LongContextProcessor.prepare(
+    instructions: input.instructions, prompt: input.prompt, responseBudget: budget,
+    currentQuestion: input.currentQuestion,
+    fits: { instructions, prompt, responseBudget, _ in
+      try await model.fits(instructions: instructions, prompt: prompt, responseBudget: responseBudget)
+    },
+    generate: model.text, checkCurrent: checkCurrent, progress: progress)
+  try checkCurrent()
+  progress("Writing your answer...")
+  let answer = try await model.text(
+    instructions: prepared.instructions, prompt: prepared.prompt, responseBudget: budget)
+  try checkCurrent()
+  let final = ModelProcessingStep(
+    kind: .final, instructions: prepared.instructions, prompt: prepared.prompt, output: answer,
+    provenance: prepared.steps.isEmpty
+      ? [ModelProcessingRange(location: 0, length: input.prompt.utf16.count)] : [],
+    responseBudget: budget)
+  return MentorGenerationResult(answer: answer, steps: prepared.steps + [final])
+}
+
+@available(iOS 26.0, *)
 @MainActor func generateApple(
-  _ request: ApprovedRequest, passages: [EvidencePassage], prompt: String, store: UniCoachStore
-) async throws -> MentorOutput {
-  guard SystemLanguageModel.default.isAvailable else { throw UniCoachError.engineUnavailable }
-  let session = LanguageModelSession(instructions: mentorInstructions)
-  let response = try await session.respond(to: prompt, generating: GeneratedReview.self)
-  try Task.checkCancellation()
-  let aliases = Dictionary(
+  _ request: ApprovedRequest, passages: [EvidencePassage], prompt: String, store: UniCoachStore,
+  ticket: GenerationTicket, progress: @MainActor (String) -> Void
+) async throws -> (output: MentorOutput, steps: [ModelProcessingStep]) {
+  func checkCurrent() throws { try store.validateGeneration(request: request, ticket: ticket) }
+  let model = AppleMentorModel(checkCurrent: checkCurrent)
+  let budget = AppleMentorModel.reviewBudget
+  let prepared = try await LongContextProcessor.prepare(
+    instructions: mentorInstructions, prompt: prompt, responseBudget: budget,
+    currentQuestion: request.question,
+    fits: { instructions, candidate, responseBudget, isFinal in
+      let evidenceBudget = isFinal && candidate != prompt ? 800 : 0
+      return try await model.fits(
+        instructions: instructions, prompt: candidate,
+        responseBudget: responseBudget + evidenceBudget, structured: isFinal)
+    },
+    generate: model.text, checkCurrent: checkCurrent, progress: progress)
+
+  let catalogue = Dictionary(
     uniqueKeysWithValues: passageAliases(passages).map { ($0.alias, $0.passage) })
+  var finalPrompt = prepared.prompt
+  var aliases = catalogue
+  if let notes = prepared.notes {
+    progress("Checking original evidence...")
+    let catalogued = try await reviewEvidence(
+      notes: notes, prepared: prepared, catalogue: catalogue, model: model,
+      checkCurrent: checkCurrent)
+    finalPrompt = catalogued.prompt
+    aliases = catalogued.aliases
+  }
+
+  try checkCurrent()
+  progress("Writing your review...")
+  let response = try await model.review(
+    instructions: prepared.instructions, prompt: finalPrompt, responseBudget: budget)
+  try checkCurrent()
   func resolve(_ item: GeneratedFinding, category: ReviewCategory) throws -> ReviewFinding {
     guard let work = aliases[item.workPassageID], work.sourceID.hasSuffix(":work"),
       let feedback = aliases[item.feedbackPassageID], feedback.sourceID.hasSuffix(":feedback")
@@ -332,7 +525,7 @@ func jointPrompt(request: ApprovedRequest, passages: [EvidencePassage]) -> Strin
     findings.isEmpty
     ? "There is not enough supported evidence to make a linked finding. Review the excerpts and consider adding more context."
     : "Review these links and decide what is useful for your next assignment."
-  return MentorOutput(
+  let output = MentorOutput(
     summary: summary, recommendations: [],
     evidenceSourceIDs: Array(
       Set(findings.flatMap { [$0.workEvidence.sourceID, $0.feedbackEvidence.sourceID] })),
@@ -351,6 +544,69 @@ func jointPrompt(request: ApprovedRequest, passages: [EvidencePassage]) -> Strin
         return AdviceItem(text: item.explanation, tutorQuote: quote)
       },
       nextStep: response.content.improvements.first?.nextStep ?? ""))
+  let final = ModelProcessingStep(
+    kind: .final, instructions: prepared.instructions, prompt: finalPrompt, output: response.output,
+    provenance: prepared.steps.isEmpty
+      ? [ModelProcessingRange(location: 0, length: prompt.utf16.count)] : [],
+    responseBudget: budget, schemaSnapshot: response.schema)
+  return (output, prepared.steps + [final])
+}
+
+@available(iOS 26.0, *)
+@MainActor private func reviewEvidence(
+  notes: String, prepared: ProcessedContext, catalogue: [String: EvidencePassage],
+  model: AppleMentorModel, checkCurrent: @MainActor () throws -> Void
+) async throws -> (prompt: String, aliases: [String: EvidencePassage]) {
+  let pattern = try NSRegularExpression(pattern: #"\b[WF][1-9][0-9]*\b"#)
+  var seen = Set<String>()
+  let candidates = ([notes] + prepared.steps.reversed().map(\.output)).flatMap { text in
+    pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+      guard let range = Range(match.range, in: text) else { return nil as String? }
+      let alias = String(text[range])
+      return catalogue[alias] != nil && seen.insert(alias).inserted ? alias : nil
+    }
+  }
+  let work = candidates.filter { $0.hasPrefix("W") }
+  let feedback = candidates.filter { $0.hasPrefix("F") }
+  var final = prepared.prompt + """
+
+
+
+    Exact approved evidence catalogue
+    The notes above are derived summaries. Use only the original passages below as evidence. Cite only the IDs in this catalogue.
+    """
+  var selected: [String: EvidencePassage] = [:]
+  let groups = [work, feedback]
+  var usedRoles = Set<Int>()
+  for index in 0..<max(work.count, feedback.count) {
+    for (role, ids) in groups.enumerated() where ids.indices.contains(index) {
+      let alias = ids[index]
+      guard let passage = catalogue[alias] else { continue }
+      let label = role == 0 ? "Submitted work" : "Tutor feedback"
+      let candidate = final + "\n\n\(label), ID: \(alias)\n\(passage.quote)"
+      try checkCurrent()
+      let fits = try await model.fits(
+        instructions: prepared.instructions, prompt: candidate,
+        responseBudget: AppleMentorModel.reviewBudget, structured: true)
+      try checkCurrent()
+      if fits {
+        selected[alias] = passage
+        final = candidate
+        usedRoles.insert(role)
+      }
+    }
+    if selected.count >= 12 && usedRoles.count == 2 { break }
+  }
+  guard usedRoles.count == 2 else { throw AppleReviewEvidenceError.unavailable }
+  return (final, selected)
+}
+
+private enum AppleReviewEvidenceError: LocalizedError {
+  case unavailable
+
+  var errorDescription: String? {
+    "Apple could not fit exact original work and feedback evidence into the final review. Shorten the approved text and approve a new request."
+  }
 }
 
 #endif
@@ -411,24 +667,31 @@ struct ReportDetail: View {
       Section("Request") {
         LabeledContent("Engine", value: report.engine.displayName)
         LabeledContent("Created", value: report.createdAt.formatted())
-        if !report.question.isEmpty { Text(report.question) }
+        if !report.question.isEmpty {
+          MentorSnapshotText(title: "Show full question", text: report.question, identifier: "report.question")
+        }
       }
       Section("Approved source snapshots") {
         ForEach(Array(report.sources.enumerated()), id: \.element.id) { index, source in
           VStack(alignment: .leading, spacing: 8) {
             Text("S\(index + 1): " + source.title).font(.headline)
-            Text(source.text).textSelection(.enabled)
+            MentorSnapshotText(
+              title: "Show approved text", text: source.text, identifier: "report.source." + source.id)
           }
         }
       }
       if let instructions = report.instructionsSnapshot {
-        Section("Model request snapshot") {
+        Section(report.processingSteps?.contains { $0.kind == .chunk } == true
+          ? "Full approved request" : "Model request snapshot")
+        {
           Text(instructions).textSelection(.enabled)
-          ForEach(Array(report.promptSnapshots.enumerated()), id: \.offset) { _, prompt in
-            Text(prompt).textSelection(.enabled)
+          ForEach(Array(report.promptSnapshots.enumerated()), id: \.offset) { index, prompt in
+            MentorSnapshotText(
+              title: "Show full prompt", text: prompt, identifier: "report.prompt." + String(index))
           }
         }
       }
+      if let steps = report.processingSteps, !steps.isEmpty { MentorProcessingAudit(steps: steps) }
     }.navigationTitle("Your feedback review")
   }
 
@@ -503,6 +766,84 @@ struct ReportDetail: View {
 
         }.padding(.vertical, 4)
       }
+    }
+  }
+}
+
+struct MentorLargeContextNotice: View {
+  var body: some View {
+    Text("Apple on-device AI may read large requests in several passes and combine summaries. Summaries can omit details.")
+      .font(.caption).foregroundStyle(.secondary)
+  }
+}
+
+struct MentorProcessingAudit: View {
+  let steps: [ModelProcessingStep]
+
+  var body: some View {
+    Section("On-device model calls") {
+      ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+        DisclosureGroup("Call \(index + 1): \(label(for: step.kind))") {
+          Text("Instructions").font(.headline)
+          Text(step.instructions).textSelection(.enabled)
+          Text("Prompt").font(.headline)
+          MentorScrollableSnapshot(text: step.prompt, identifier: "model.prompt." + String(index))
+          if let budget = step.responseBudget {
+            LabeledContent("Maximum response tokens", value: budget.formatted())
+          }
+          if let schema = step.schemaSnapshot {
+            DisclosureGroup("Response schema") { Text(schema).textSelection(.enabled) }
+          }
+          if !step.provenance.isEmpty {
+            let ranges = step.provenance.map { "\($0.location)–\($0.location + $0.length)" }
+              .joined(separator: ", ")
+            Text("Approved prompt offsets (UTF-16): \(ranges)").font(.caption)
+          }
+          Text("Model output").font(.headline)
+          Text(step.output).textSelection(.enabled)
+        }
+        .accessibilityIdentifier("model.call.\(index)")
+      }
+    }
+  }
+
+  private func label(for kind: ModelProcessingKind) -> String {
+    switch kind {
+    case .chunk: return "Read approved text"
+    case .reduction: return "Combine notes"
+    case .final: return "Final response"
+    }
+  }
+}
+
+struct MentorSnapshotText: View {
+  let title: String
+  let text: String
+  let identifier: String
+
+  var body: some View {
+    if text.utf16.count > 3_000 {
+      DisclosureGroup(title) {
+        MentorScrollableSnapshot(text: text, identifier: identifier)
+      }
+    } else {
+      Text(text).textSelection(.enabled).accessibilityIdentifier(identifier)
+    }
+  }
+}
+
+struct MentorScrollableSnapshot: View {
+  @ScaledMetric(relativeTo: .body) private var viewportHeight: CGFloat = 260
+  let text: String
+  let identifier: String
+
+  var body: some View {
+    let snapshot = Text(text).textSelection(.enabled).accessibilityIdentifier(identifier)
+    if text.utf16.count > 3_000 {
+      ScrollView { snapshot.frame(maxWidth: .infinity, alignment: .leading) }
+        .frame(height: viewportHeight)
+    } else {
+      snapshot
     }
   }
 }

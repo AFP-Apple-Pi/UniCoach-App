@@ -11,7 +11,7 @@ import Observation
   private var startedRequests: Set<UUID> = []
   private var sourceRevisions: [String: UInt64] = [:]
   private var assignmentRevisions: [UUID: UInt64] = [:]
-  public static let contextCharacterLimit = 6000
+  public static let contextCharacterLimit = 50000
 
   public init(fileURL: URL? = nil) {
     self.fileURL =
@@ -599,37 +599,39 @@ import Observation
       startedRequests.remove(ticket.requestID)
     }
   }
+  public func validateGeneration(request: ApprovedRequest, ticket: GenerationTicket) throws {
+    try Task.checkCancellation()
+    guard ticket.requestID == request.id, activeTickets.contains(ticket), approvedRequests[request.id] == request else { throw UniCoachError.cancelled }
+    try validateCurrent(request)
+  }
   @discardableResult public func generateMentorAnswer(
     request: ApprovedRequest, ticket: GenerationTicket,
     using appleGenerator: @MainActor (MentorQuestionInput) async throws -> String
   ) async throws -> MentorAnswer {
-    guard request.purpose == .mentorQuestion, request.engine == .appleOnDevice else {
-      throw UniCoachError.engineUnavailable
-    }
-    guard ticket.requestID == request.id, approvedRequests[request.id] == request,
-      activeTickets.contains(ticket), runningMentorAnswers.insert(ticket).inserted
+    try await generateProcessedMentorAnswer(request: request, ticket: ticket, using: { input in
+      MentorGenerationResult(answer: try await appleGenerator(input), steps: [])
+    })
+  }
+  @discardableResult public func generateProcessedMentorAnswer(
+    request: ApprovedRequest, ticket: GenerationTicket,
+    using appleGenerator: @MainActor (MentorQuestionInput) async throws -> MentorGenerationResult
+  ) async throws -> MentorAnswer {
+    guard request.purpose == .mentorQuestion, request.engine == .appleOnDevice else { throw UniCoachError.engineUnavailable }
+    guard ticket.requestID == request.id, activeTickets.contains(ticket),
+      approvedRequests[request.id] == request, runningMentorAnswers.insert(ticket).inserted
     else { throw UniCoachError.cancelled }
-    defer {
-      runningMentorAnswers.remove(ticket)
-      cancel(ticket: ticket)
-    }
-    try Task.checkCancellation()
-    try validateCurrent(request)
-
+    defer { runningMentorAnswers.remove(ticket); cancel(ticket: ticket) }
+    try validateGeneration(request: request, ticket: ticket)
     let input = MentorQuestionInput(request: request)
-    let answer = try await appleGenerator(input)
-    try Task.checkCancellation()
-    guard activeTickets.contains(ticket) else { throw UniCoachError.cancelled }
-    try validateCurrent(request)
-    guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw UniCoachError.emptyAnswer
-    }
-
+    let result = try await appleGenerator(input)
+    try validateGeneration(request: request, ticket: ticket)
+    guard !result.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw UniCoachError.emptyAnswer }
     let saved = MentorAnswer(
       id: UUID(), createdAt: Date(), question: request.question, engine: request.engine,
       sources: request.sources, assignmentID: request.assignmentID,
-      instructionsSnapshot: input.instructions, promptSnapshot: input.prompt, answer: answer,
-      conversationID: request.conversation?.conversationID, approvedConversation: request.conversation)
+      instructionsSnapshot: input.instructions, promptSnapshot: input.prompt, answer: result.answer,
+      conversationID: request.conversation?.conversationID, approvedConversation: request.conversation,
+      processingSteps: result.steps.isEmpty ? nil : result.steps)
     var n = data
     n.mentorAnswers.insert(saved, at: 0)
     try commit(n)
@@ -678,7 +680,8 @@ import Observation
   }
   @discardableResult public func saveReport(
     request: ApprovedRequest, output: MentorOutput, ticket: GenerationTicket,
-    instructionsSnapshot: String? = nil, promptSnapshots: [String] = []
+    instructionsSnapshot: String? = nil, promptSnapshots: [String] = [],
+    processingSteps: [ModelProcessingStep] = []
   ) throws -> MentorReport {
     guard request.purpose == .feedbackReview else { throw UniCoachError.cancelled }
     guard ticket.requestID == request.id, approvedRequests[request.id] == request,
@@ -718,7 +721,7 @@ import Observation
     let report = MentorReport(
       question: request.question, engine: request.engine, sources: request.sources, output: output,
       assignmentID: request.assignmentID, instructionsSnapshot: instructionsSnapshot,
-      promptSnapshots: promptSnapshots)
+      promptSnapshots: promptSnapshots, processingSteps: processingSteps.isEmpty ? nil : processingSteps)
     var n = data
     n.reports.insert(report, at: 0)
     try commit(n)
