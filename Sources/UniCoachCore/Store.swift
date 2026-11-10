@@ -21,9 +21,17 @@ import Observation
     self.data = AppData()
     do {
       if FileManager.default.fileExists(atPath: self.fileURL.path) {
-        self.data = try JSONDecoder().decode(AppData.self, from: Data(contentsOf: self.fileURL))
+        let loaded = try JSONDecoder().decode(AppData.self, from: Data(contentsOf: self.fileURL))
+        guard Self.hasUniqueIDs(loaded.subjects), Self.hasUniqueIDs(loaded.assignments),
+          Self.hasUniqueIDs(loaded.goals), Self.hasUniqueIDs(loaded.reports),
+          Self.hasUniqueIDs(loaded.mentorAnswers)
+        else { throw CocoaError(.fileReadCorruptFile) }
+        self.data = loaded
       }
     } catch { self.loadingError = "Could not load saved data: \(error.localizedDescription)" }
+  }
+  private static func hasUniqueIDs<T: Identifiable>(_ records: [T]) -> Bool {
+    Set(records.map(\.id)).count == records.count
   }
   private func commit(_ next: AppData) throws {
     // Never overwrite an unreadable existing file until the user has recovered it.
@@ -57,6 +65,7 @@ import Observation
     try commit(n)
   }
   public func upsertSubject(_ subject: Subject) throws {
+    guard subject.credits.isFinite && subject.credits >= 0 else { throw UniCoachError.invalidCredits }
     var n = data
     var normalized = subject
     let text = normalized.academicGoal

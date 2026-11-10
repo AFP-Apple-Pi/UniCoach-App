@@ -691,7 +691,7 @@ public struct GenerationTicket: Hashable {
 }
 public enum UniCoachError: LocalizedError, Equatable {
   case invalidQuestion, noSources, emptySource, contextTooLong, sourceChanged, invalidEvidence,
-    cancelled, invalidRelationship, invalidGrade, engineUnavailable, emptyAnswer, contextProcessingFailed
+    cancelled, invalidRelationship, invalidGrade, invalidCredits, engineUnavailable, emptyAnswer, contextProcessingFailed
   public var errorDescription: String? {
     switch self {
     case .contextProcessingFailed: return "The approved material could not be processed within the on-device model limits. Try a smaller request."
@@ -703,6 +703,7 @@ public enum UniCoachError: LocalizedError, Equatable {
     case .invalidEvidence: return "The response must reference approved sources."
     case .cancelled: return "This request was cancelled or is no longer active."
     case .invalidRelationship: return "The linked subject could not be found."
+    case .invalidCredits: return "Enter a valid nonnegative number of credits."
     case .invalidGrade:
       return
         "Enter a positive total. If marks are entered, they must be between zero and the total."

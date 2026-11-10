@@ -266,8 +266,15 @@ func subjectColor(_ hex: String) -> Color {
 struct SubjectEditor: View {
   @Environment(AppState.self) private var app
   @Environment(\.dismiss) private var dismiss
-  @State var subject: Subject
+  @Environment(\.locale) private var locale
+  @State private var subject: Subject
+  @State private var creditsDraft: String?
+  @State private var invalidCredits = false
   let colors = ["#287C76", "#526EA3", "#A3664C", "#806395", "#A58435"]
+  init(subject: Subject) {
+    _subject = State(initialValue: subject)
+  }
+
   var body: some View {
     NavigationStack {
       Form {
@@ -275,7 +282,10 @@ struct SubjectEditor: View {
           Image("SubjectBookHero").resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 130).accessibilityHidden(true)
           TextField("Name", text: $subject.name).accessibilityIdentifier("subject.name")
           TextField("Code", text: $subject.code).accessibilityIdentifier("subject.code")
-          TextField("Credits", value: $subject.credits, format: .number).keyboardType(.decimalPad)
+          TextField("Credits", text: Binding(
+            get: { creditsDraft ?? subject.credits.formatted(.number.locale(locale)) },
+            set: { creditsDraft = $0 }
+          )).keyboardType(.decimalPad).accessibilityIdentifier("subject.credits")
           TextField("Tutor", text: $subject.tutor)
         }
         Section("Subject description") {
@@ -308,16 +318,54 @@ struct SubjectEditor: View {
         .navigationBarTitleDisplayMode(.inline).toolbar {
           ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
           ToolbarItem(placement: .confirmationAction) {
-            Button("Save") {
-              app.perform {
-                try app.store.upsertSubject(subject)
-                dismiss()
-              }
-            }.accessibilityIdentifier("editor.save").disabled(
+            Button("Save", action: saveSubject)
+              .accessibilityIdentifier("editor.save").disabled(
               subject.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
           }
         }
+        .alert("Invalid credits", isPresented: $invalidCredits) {
+          Button("OK", role: .cancel) {}
+        } message: {
+          Text(UniCoachError.invalidCredits.localizedDescription)
+        }
     }
+  }
+
+  private func saveSubject() {
+    let credits: Double?
+    if let creditsDraft {
+      credits = parseCredits(creditsDraft)
+    } else {
+      credits = subject.credits
+    }
+    guard let credits, credits.isFinite, credits >= 0 else {
+      invalidCredits = true
+      return
+    }
+    subject.credits = credits
+    app.perform {
+      try app.store.upsertSubject(subject)
+      dismiss()
+    }
+  }
+
+  private func parseCredits(_ input: String) -> Double? {
+    let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty { return 0 }
+
+    // Foundation can parse a valid numeric prefix and ignore invalid trailing text.
+    // Check the full input before using the locale's grouping and decimal rules.
+    let parts = value.components(separatedBy: locale.decimalSeparator ?? ".")
+    guard parts.count <= 2 else { return nil }
+    let groups = parts[0].components(separatedBy: locale.groupingSeparator ?? ",")
+    guard groups.count == 1 || groups.allSatisfy({ !$0.isEmpty }) else { return nil }
+    let digits = (groups + Array(parts.dropFirst())).joined()
+    guard !digits.isEmpty, digits.allSatisfy({ digit in
+      digit.wholeNumberValue.map { (0...9).contains($0) } == true
+    }) else { return nil }
+
+    let format = FloatingPointFormatStyle<Double>.number.locale(locale)
+    return try? FloatingPointParseStrategy(format: format, lenient: false).parse(value)
   }
 }
 

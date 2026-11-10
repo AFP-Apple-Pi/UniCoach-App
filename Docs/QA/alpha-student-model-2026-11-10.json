@@ -1,0 +1,149 @@
+{
+  "fixture": "AppTests/Fixtures/student.json",
+  "provenance": "Invented student material. Actual first approved review and two chat turns, without editing or retry.",
+  "runtime": {
+    "deviceFamily": "iPhone 16",
+    "os": "iOS 27.2",
+    "engine": "appleOnDevice"
+  },
+  "approvalCounts": {
+    "review": 1,
+    "chat": 2
+  },
+  "technicalUITests": [
+    {
+      "name": "testAlphaGroundedAssignmentReview",
+      "result": "passed",
+      "durationSeconds": 61.162
+    },
+    {
+      "name": "testAlphaRetainedAppleConversation",
+      "result": "passed",
+      "durationSeconds": 58.759
+    }
+  ],
+  "semanticEvaluation": {
+    "groundedReview": "Mostly aligned with the tutor comments: evidence-to-requirement links, observation versus inference, and stale availability data. Internal W2/W3/W4/W5 passage aliases leak into user-facing advice without explanation.",
+    "firstChatTurn": "Broadly grounded. Wording about incorporating availability weakly overlooks that the work already proposes this feature.",
+    "followup": "Partial instruction-following failure. It mentions two 45-minute sessions but does not allocate tasks and checks to each session, largely repeats the earlier answer and asks whether the student wants help organizing them."
+  },
+  "actualReviewOutput": {
+    "evidenceSourceIDs": [
+      "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work",
+      "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback"
+    ],
+    "summary": "Review these links and decide what is useful for your next assignment.",
+    "findings": [
+      {
+        "nextStep": "Review each grouped observation in W3 and W5 to ensure ethical protocols are consistently applied.",
+        "explanation": "Themes are clearly organised and ethical handling of interview notes is appropriate, as seen in the structured grouping of observations in W3 and the acknowledgement of participant perspectives in W5.",
+        "category": "keepDoing",
+        "workEvidence": {
+          "quote": "The first theme is uncertainty: students cannot know whether a space meets their needs until they arrive. The second is time pressure between classes. The third is the trade-off between quiet space and reliable charging. ",
+          "location": 391,
+          "length": 221,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work:391:221"
+        },
+        "feedbackEvidence": {
+          "quote": "Your themes are clearly organised and your ethical handling of interview notes is appropriate.",
+          "location": 0,
+          "length": 94,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback:sentence:0:94"
+        }
+      },
+      {
+        "nextStep": "Add a concrete, anonymised example linking power-access needs to participant responses in W3.",
+        "explanation": "The power-access requirement needs a specific anonymised example, as suggested by the need to strengthen the connection between requirements and evidence in W3 and W5.",
+        "category": "improve",
+        "workEvidence": {
+          "quote": "The first theme is uncertainty: students cannot know whether a space meets their needs until they arrive. The second is time pressure between classes. The third is the trade-off between quiet space and reliable charging. ",
+          "location": 391,
+          "length": 221,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work:391:221"
+        },
+        "feedbackEvidence": {
+          "quote": "Strengthen the connection between each requirement and the underlying interview evidence: the power-access requirement needs a specific anonymised example.",
+          "location": 162,
+          "length": 155,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback:sentence:162:155"
+        }
+      },
+      {
+        "nextStep": "Review W2 and W3 to explicitly label participant statements versus inferred patterns.",
+        "explanation": "Separate what participants said from what you inferred, as required to clarify the distinction between observations in W2 and interpretations in W3.",
+        "category": "improve",
+        "workEvidence": {
+          "quote": "One participant checks two floors before finding a free desk; another prefers a familiar location even when it is noisy. I coded the notes using access, uncertainty and comfort, then grouped repeated observations. ",
+          "location": 177,
+          "length": 214,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work:177:214"
+        },
+        "feedbackEvidence": {
+          "quote": "Separate what participants said from what you inferred.",
+          "location": 318,
+          "length": 55,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback:sentence:318:55"
+        }
+      },
+      {
+        "nextStep": "Identify data update intervals in W4 and W5 and document potential impacts of outdated availability information.",
+        "explanation": "Explain how stale data could mislead students, as implied by the recommendation to display availability and the need to address data reliability in W4 and W5.",
+        "category": "improve",
+        "workEvidence": {
+          "quote": "I propose filters for noise and power, clear opening hours, and an indication of when availability information was last updated. This evidence supports exploring those features; it does not establish their priority across campus. ",
+          "location": 612,
+          "length": 230,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:work:612:230"
+        },
+        "feedbackEvidence": {
+          "quote": "The recommendation to display availability is promising, but explain how stale data could mislead students.",
+          "location": 374,
+          "length": 107,
+          "sourceID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback",
+          "passageID": "assignment:0C343040-899E-5F36-9F98-6DA2C86A6027:feedback:sentence:374:107"
+        }
+      }
+    ],
+    "advice": {
+      "nextStep": "Add a concrete, anonymised example linking power-access needs to participant responses in W3.",
+      "keepDoing": [
+        {
+          "text": "Themes are clearly organised and ethical handling of interview notes is appropriate, as seen in the structured grouping of observations in W3 and the acknowledgement of participant perspectives in W5.",
+          "tutorQuote": "Your themes are clearly organised and your ethical handling of interview notes is appropriate."
+        }
+      ],
+      "improve": [
+        {
+          "text": "The power-access requirement needs a specific anonymised example, as suggested by the need to strengthen the connection between requirements and evidence in W3 and W5.",
+          "tutorQuote": "Strengthen the connection between each requirement and the underlying interview evidence: the power-access requirement needs a specific anonymised example."
+        },
+        {
+          "text": "Separate what participants said from what you inferred, as required to clarify the distinction between observations in W2 and interpretations in W3.",
+          "tutorQuote": "Separate what participants said from what you inferred."
+        },
+        {
+          "text": "Explain how stale data could mislead students, as implied by the recommendation to display availability and the need to address data reliability in W4 and W5.",
+          "tutorQuote": "The recommendation to display availability is promising, but explain how stale data could mislead students."
+        }
+      ]
+    },
+    "recommendations": []
+  },
+  "actualConversation": [
+    {
+      "question": "How can I turn my tutor’s comments on the campus study-space report into a practical revision plan before the prototype review?",
+      "answer": "Start by using the tutor’s comments to clarify the link between each requirement and the evidence. The report notes that the power-access requirement needs a clear example tied to interview data. Add that example to show how the feature responds to student needs.\n\nNext, separate participant statements from inferences. The feedback highlights the need to distinguish preferences from design rules. Use the clarity of the decision-making themes to guide the structure.\n\nFinally, incorporate the recommendation to display availability. The tutor points out that outdated data could confuse students. Map this idea to the report’s limitations and include a note on how stale information might affect planning.\n\nPlan your revision by reviewing each requirement against the coded observations. Use the traceability table mentioned in the reflection to document connections between findings and recommendations."
+    },
+    {
+      "question": "I have two 45-minute study sessions available. What should I prioritise in each, and what should I check at the end?",
+      "answer": "Use the tutor’s comments to clarify how each requirement connects to the evidence. Review the power-access comment to ensure the feature clearly ties to interview data. Check that the feature addresses student needs through that data.\n\nNext, separate statements from assumptions. Identify preferences and design rules to see where clarity is needed. Use the decision-making themes to shape your plan.\n\nAlso, review the recommendation to show availability. Confirm that outdated data is addressed and could impact planning.\n\nPlan your revision by reviewing each requirement against coded observations. Use the traceability table to document how findings lead to recommendations.\n\nIn your two 45-minute sessions, focus on clarifying data links and distinguishing preferences from rules. At the end, review your traceability table for gaps and confirm that outdated data is managed.\n\nWould you like help organizing specific tasks for each session?"
+    }
+  ]
+}

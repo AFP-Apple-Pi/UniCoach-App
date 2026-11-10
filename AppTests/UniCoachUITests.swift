@@ -1,6 +1,15 @@
 import XCTest
 
 final class UniCoachUITests: XCTestCase {
+  override func setUp() {
+    super.setUp()
+    let previous = XCUIDevice.shared.orientation
+    if previous == .landscapeLeft || previous == .landscapeRight || previous == .portraitUpsideDown {
+      addTeardownBlock { XCUIDevice.shared.orientation = previous }
+    }
+    XCUIDevice.shared.orientation = .portrait
+  }
+
   private func element(_ app: XCUIApplication, id: String) -> XCUIElement {
     app.descendants(matching: .any).matching(identifier: id).firstMatch
   }
@@ -24,7 +33,7 @@ final class UniCoachUITests: XCTestCase {
         ? min(frame.height - 100, keyboard.frame.minY - frame.minY - 28)
         : frame.height - 100
       let upper = min(170, lower - 60)
-      let x = 24 / frame.width
+      let x = frame.width > frame.height ? 0.12 : 24 / frame.width
       let start = app.coordinate(
         withNormalizedOffset: CGVector(dx: x, dy: (up ? lower : upper) / frame.height))
       let end = app.coordinate(
@@ -622,6 +631,906 @@ final class UniCoachUITests: XCTestCase {
     app.navigationBars.buttons["Done"].tap()
     XCTAssertEqual(input.value as? String, draft)
     XCTAssertFalse(element(app, id: "conversation.question.0").exists)
+  }
+
+  func testAlphaProfileAndGoalLifecycle() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke"]
+    app.launch()
+    let name = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "Name")).firstMatch
+    let university = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "University")).firstMatch
+    let course = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "Course")).firstMatch
+    XCTAssertTrue(name.waitForExistence(timeout: 10))
+    name.tap()
+    name.typeText("Quinn Example")
+    university.tap()
+    university.typeText("Example University")
+    course.tap()
+    course.typeText("Design Studies")
+    app.buttons["profile.save"].tap()
+    XCTAssertTrue(app.staticTexts["Greetings, Quinn Example"].waitForExistence(timeout: 5))
+
+    app.navigationBars.buttons["Profile"].tap()
+    let privacy = app.staticTexts["Your data and mentor requests stay on this device. Imported files are reviewed before use."]
+    guard reach(privacy, in: app) else { return }
+    guard reach(app.staticTexts["No reports yet."], in: app) else { return }
+    app.navigationBars.buttons["Edit"].tap()
+    name.tap()
+    name.typeText(" Unsaved")
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertTrue(app.staticTexts["Quinn Example"].exists)
+    XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Unsaved")).firstMatch.exists)
+    app.navigationBars.buttons["Edit"].tap()
+    replaceText(in: course, with: "Interaction Design")
+    app.buttons["profile.save"].tap()
+    XCTAssertTrue(app.staticTexts["Interaction Design"].waitForExistence(timeout: 5))
+    app.terminate()
+    app.launchArguments = ["-ui-smoke-preserve"]
+    app.launch()
+    XCTAssertTrue(app.staticTexts["Greetings, Quinn Example"].waitForExistence(timeout: 10))
+    app.navigationBars.buttons["Profile"].tap()
+    XCTAssertTrue(app.staticTexts["Example University"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["Interaction Design"].exists)
+    back("Home", in: app)
+
+    let goals = app.buttons["home.catalogue.goals"]
+    guard reach(goals, in: app) else { return }
+    goals.tap()
+    let add = app.buttons["goals.add"]
+    guard reach(add, in: app) else { return }
+    add.tap()
+    let save = app.buttons["goal.save"]
+    XCTAssertFalse(save.isEnabled, "A blank goal cannot be saved")
+    enter("Discarded goal", id: "goal.title", in: app)
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertTrue(app.staticTexts["No learning goals in this selection."].exists)
+
+    add.tap()
+    enter("Draft a weekly reading plan", id: "goal.title", in: app)
+    save.tap()
+    let actions = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@", "learning.goal.actions."
+    )).firstMatch
+    guard reach(actions, in: app) else { return }
+    actions.tap()
+    app.buttons["Edit goal"].tap()
+    let editedTitle = "Review a weekly reading plan"
+    replaceText(in: element(app, id: "goal.title"), with: editedTitle)
+    save.tap()
+    let goal = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@", "learning.goal.", editedTitle
+    )).firstMatch
+    guard reach(goal, in: app) else { return }
+    XCTAssertEqual(goal.value as? String, "Not completed")
+    goal.tap()
+    XCTAssertEqual(goal.value as? String, "Completed")
+    actions.tap()
+    app.buttons["Delete goal"].tap()
+    cancelConfirmation("Delete this goal?", in: app)
+    XCTAssertTrue(goal.exists, "Cancel must keep the completed goal")
+    actions.tap()
+    app.buttons["Delete goal"].tap()
+    app.sheets["Delete this goal?"].buttons["Delete goal"].tap()
+    XCTAssertTrue(app.staticTexts["No learning goals in this selection."].waitForExistence(timeout: 5))
+    XCTAssertFalse(goal.exists)
+  }
+
+  func testAlphaAssignmentValidationAndDeletion() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke"]
+    app.launch()
+    let continueButton = app.buttons["profile.save"]
+    XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+    continueButton.tap()
+    let subjects = app.buttons["home.catalogue.subjects"]
+    guard reach(subjects, in: app) else { return }
+    subjects.tap()
+    let addSubject = app.buttons["subject.add"]
+    guard reach(addSubject, in: app) else { return }
+    addSubject.tap()
+    let save = app.buttons["editor.save"]
+    XCTAssertFalse(save.isEnabled, "A blank subject cannot be saved")
+    enter("Discarded subject", id: "subject.name", in: app)
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertFalse(app.staticTexts["Discarded subject"].exists)
+
+    let sample = app.buttons["subjects.sample"]
+    guard reach(sample, in: app) else { return }
+    sample.tap()
+    let subject = app.staticTexts["Example subject"].firstMatch
+    app.swipeDown()
+    guard reach(subject, in: app) else { return }
+    subject.tap()
+    let editSubject = app.buttons["subject.edit"]
+    let credits = element(app, id: "subject.credits")
+    editSubject.tap()
+    guard reach(credits, in: app) else { return }
+    let invalidCredits = app.alerts["Invalid credits"]
+    for invalid in ["-1", "12abc"] {
+      credits.tap()
+      credits.typeKey("a", modifierFlags: .command)
+      for character in invalid { credits.typeKey(String(character), modifierFlags: []) }
+      XCTAssertEqual(credits.value as? String, invalid)
+      save.tap()
+      XCTAssertTrue(invalidCredits.waitForExistence(timeout: 5))
+      XCTAssertTrue(invalidCredits.staticTexts["Enter a valid nonnegative number of credits."].exists)
+      invalidCredits.buttons["OK"].tap()
+    }
+    let decimalSeparator = Locale.current.decimalSeparator ?? "."
+    let fractional = "6" + decimalSeparator + "5"
+    replaceText(in: credits, with: fractional)
+    save.tap()
+    let fractionalCredits = app.staticTexts.matching(NSPredicate(
+      format: "label BEGINSWITH %@", fractional + " credits")).firstMatch
+    XCTAssertTrue(fractionalCredits.waitForExistence(timeout: 5))
+    editSubject.tap()
+    guard reach(credits, in: app) else { return }
+    replaceText(in: credits, with: "0")
+    save.tap()
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+      format: "label BEGINSWITH %@", "0 credits")).firstMatch.waitForExistence(timeout: 5))
+
+    let addAssignment = app.buttons["subject.addAssignment"]
+    guard reach(addAssignment, in: app) else { return }
+    addAssignment.tap()
+    XCTAssertFalse(save.isEnabled, "Only the final review can save")
+    let next = app.buttons["assignment.next"]
+    guard reach(next, in: app) else { return }
+    XCTAssertFalse(next.isEnabled, "Details require an assignment title")
+    let title = "Validation exercise"
+    let titleField = element(app, id: "assignment.title")
+    guard reach(titleField, in: app, up: false) else { return }
+    enter(title, id: "assignment.title", in: app)
+    enter("101", id: "assignment.weighting", in: app)
+    guard advanceAssignment(in: app), advanceAssignment(in: app) else { return }
+    enter("90", id: "assignment.score", in: app)
+    enter("20", id: "assignment.outOf", in: app)
+    guard advanceAssignment(in: app) else { return }
+    save.tap()
+    let alert = app.alerts.firstMatch
+    XCTAssertTrue(alert.waitForExistence(timeout: 5))
+    XCTAssertTrue(alert.staticTexts["Enter a weighting between 0 and 100."].exists)
+    alert.buttons["OK"].tap()
+
+    guard selectAssignmentStep("Details", in: app) else { return }
+    let weighting = element(app, id: "assignment.weighting")
+    guard reach(weighting, in: app) else { return }
+    replaceText(in: weighting, with: "25")
+    guard dismissKeyboard("assignment.keyboardDone", in: app),
+      selectAssignmentStep("Review", in: app)
+    else { return }
+    save.tap()
+    XCTAssertTrue(alert.waitForExistence(timeout: 5))
+    XCTAssertTrue(alert.staticTexts["Enter a positive total. If you enter a score, it must be between zero and the total."].exists)
+    alert.buttons["OK"].tap()
+
+    guard selectAssignmentStep("Feedback", in: app) else { return }
+    let score = element(app, id: "assignment.score")
+    guard reach(score, in: app) else { return }
+    replaceText(in: score, with: "18")
+    guard dismissKeyboard("assignment.keyboardDone", in: app),
+      selectAssignmentStep("Review", in: app)
+    else { return }
+    save.tap()
+    let savedAssignment = app.staticTexts[title].firstMatch
+    guard reach(savedAssignment, in: app) else { return }
+    savedAssignment.tap()
+    guard reach(app.staticTexts["Grade: 18 / 20"], in: app) else { return }
+    let actions = app.buttons["assignment.actions"]
+    actions.tap()
+    app.buttons["Delete assignment"].tap()
+    cancelConfirmation("Delete this assignment?", in: app)
+    XCTAssertTrue(app.navigationBars[title].exists)
+    actions.tap()
+    app.buttons["Delete assignment"].tap()
+    app.sheets["Delete this assignment?"].buttons["Delete assignment"].tap()
+    XCTAssertTrue(app.navigationBars["Subject"].waitForExistence(timeout: 5))
+    XCTAssertFalse(savedAssignment.exists)
+
+    let deleteSubject = app.buttons["Delete subject"]
+    guard reach(deleteSubject, in: app) else { return }
+    deleteSubject.tap()
+    cancelConfirmation("Delete this subject and its assignments?", in: app)
+    XCTAssertTrue(app.navigationBars["Subject"].exists)
+    let sampleAssignment = app.staticTexts["Example assignment"]
+    guard reach(sampleAssignment, in: app, up: false) else { return }
+    guard reach(deleteSubject, in: app) else { return }
+    deleteSubject.tap()
+    app.sheets["Delete this subject and its assignments?"].buttons["Delete subject"].tap()
+    XCTAssertTrue(app.navigationBars["My Learning"].waitForExistence(timeout: 5))
+    XCTAssertFalse(subject.exists)
+    app.tabBars.buttons["AI Mentor"].tap()
+    XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Example assignment")).firstMatch.exists)
+  }
+
+  private func cancelConfirmation(_ title: String, in app: XCUIApplication) {
+    let confirmation = app.sheets[title]
+    XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+    let cancel = app.buttons["Cancel"].firstMatch
+    if cancel.exists && cancel.isHittable {
+      cancel.tap()
+    } else {
+      // Anchored confirmation popovers on iOS can omit a Cancel button.
+      let outside = app.otherElements["PopoverDismissRegion"]
+      XCTAssertTrue(outside.exists)
+      outside.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+    }
+    let dismissed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: confirmation)
+    XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+  }
+
+  private func replaceText(in field: XCUIElement, with text: String) {
+    field.tap()
+    field.typeKey("a", modifierFlags: .command)
+    field.typeText(text)
+  }
+
+  private func selectAssignmentStep(_ label: String, in app: XCUIApplication) -> Bool {
+    let step = app.segmentedControls.buttons[label]
+    guard reach(step, in: app, up: false) else { return false }
+    step.tap()
+    XCTAssertTrue(step.isSelected)
+    return true
+  }
+
+  func testAlphaLandscapeNavigationAndComposer() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .landscapeLeft
+    defer { XCUIDevice.shared.orientation = .portrait }
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke"]
+    app.launch()
+    let continueButton = app.buttons["profile.save"]
+    XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+    continueButton.tap()
+    XCTAssertGreaterThan(app.frame.width, app.frame.height)
+    let subjects = app.buttons["home.catalogue.subjects"]
+    guard reach(subjects, in: app) else { return }
+    subjects.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Subjects"].isSelected)
+    let addSubject = app.buttons["subject.add"]
+    guard reach(addSubject, in: app) else { return }
+    app.tabBars.buttons["AI Mentor"].tap()
+    let newConversation = app.buttons["mentor.ask"]
+    guard reach(newConversation, in: app) else { return }
+    newConversation.tap()
+    let input = element(app, id: "conversation.input")
+    let send = app.buttons["conversation.send"]
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    XCTAssertTrue(input.isHittable)
+    XCTAssertFalse(send.isEnabled)
+    input.tap()
+    input.typeText("Study")
+    XCTAssertTrue(app.keyboards.firstMatch.exists)
+    XCTAssertTrue(input.isHittable)
+    XCTAssertTrue(send.isHittable)
+    let sources = app.buttons["conversation.sources"]
+    XCTAssertTrue(sources.isHittable)
+    let keyboard = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    keyboard.name = "Landscape Mentor composer and keyboard"
+    keyboard.lifetime = .keepAlways
+    add(keyboard)
+    sources.tap()
+    XCTAssertTrue(app.navigationBars["Add context"].waitForExistence(timeout: 5))
+    let context = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    context.name = "Landscape Mentor source sheet"
+    context.lifetime = .keepAlways
+    add(context)
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertEqual(input.value as? String, "Study")
+    XCTAssertFalse(element(app, id: "conversation.question.0").exists)
+  }
+
+  func testAlphaFileImport() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_IMPORT_FIXTURES"] == "1" else {
+      throw XCTSkip("Requires the alpha Files fixtures and temporary file-sharing test build.")
+    }
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke"]
+    app.launch()
+    let continueButton = app.buttons["profile.save"]
+    XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+    continueButton.tap()
+    app.tabBars.buttons["My Learning"].tap()
+    let sample = app.buttons["subjects.sample"]
+    guard reach(sample, in: app) else { return }
+    sample.tap()
+    app.swipeDown()
+    let subject = app.staticTexts["Example subject"].firstMatch
+    guard reach(subject, in: app) else { return }
+    subject.tap()
+    let assignment = app.staticTexts["Example assignment"].firstMatch
+    guard reach(assignment, in: app) else { return }
+    assignment.tap()
+    app.buttons["assignment.actions"].tap()
+    app.buttons["assignment.edit"].tap()
+
+    let brief = app.textViews["Assignment brief"]
+    guard reach(brief, in: app) else { return }
+    let originalBrief = try XCTUnwrap(brief.value as? String)
+    guard openAlphaImport("Import brief", in: app) else { return }
+    cancelAlphaPicker(in: app)
+    XCTAssertEqual(brief.value as? String, originalBrief)
+    guard openAlphaImport("Import brief", in: app),
+      selectAlphaFile("Alpha brief", in: app)
+    else { return }
+    let review = app.navigationBars["Review import"]
+    let preview = try alphaImportPreview(containing: "Review marker: before edit.", in: app)
+    replaceText(in: preview, with: "Discarded imported revision.")
+    review.buttons["Cancel"].tap()
+    XCTAssertEqual(brief.value as? String, originalBrief)
+
+    guard openAlphaImport("Import brief", in: app),
+      selectAlphaFile("Alpha brief", in: app)
+    else { return }
+    let reopenedPreview = try alphaImportPreview(containing: "Review marker: before edit.", in: app)
+    let acceptedBrief = "Accepted revised brief about library study spaces."
+    replaceText(in: reopenedPreview, with: acceptedBrief)
+    review.buttons["Use text"].tap()
+    XCTAssertEqual(brief.value as? String, acceptedBrief)
+
+    for file in ["Alpha empty", "Alpha invalid UTF8", "Alpha oversized bytes", "Alpha oversized text", "Alpha scanned"] {
+      guard openAlphaImport("Import brief", in: app), selectAlphaFile(file, in: app) else { return }
+      let alert = app.alerts["Import"]
+      XCTAssertTrue(alert.waitForExistence(timeout: 8), "Import should reject " + file)
+      let message = alert.staticTexts.allElementsBoundByIndex.map(\.label)
+        .filter { $0 != "Import" }.joined(separator: " ")
+      if file.contains("oversized") {
+        XCTAssertTrue(message.contains("too large"))
+      } else if file == "Alpha empty" || file == "Alpha scanned" {
+        XCTAssertTrue(message.contains("No selectable text was found"))
+      } else {
+        XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      XCTAssertFalse(review.exists)
+      alert.buttons["OK"].tap()
+      XCTAssertEqual(brief.value as? String, acceptedBrief)
+    }
+
+    guard openAlphaImport("Import brief", in: app) else { return }
+    let unsupported = alphaPickerItem("Alpha unsupported", in: app)
+    if unsupported.exists && unsupported.isEnabled {
+      let scrolled = scrollToAlphaFile(unsupported, in: app)
+      guard tapAlphaFile(unsupported, in: app, scrolled: scrolled) else { return }
+      let alert = app.alerts["Import"]
+      XCTAssertTrue(alert.waitForExistence(timeout: 8))
+      XCTAssertTrue(alert.staticTexts["Choose a UTF-8 text file or selectable-text PDF."].exists)
+      alert.buttons["OK"].tap()
+      print("alpha_unsupported_file=rejected_by_app")
+    } else {
+      XCTAssertTrue(isInAlphaFixtureFolder(app))
+      cancelAlphaPicker(in: app)
+      print("alpha_unsupported_file=filtered_by_picker")
+    }
+    XCTAssertEqual(brief.value as? String, acceptedBrief)
+
+    guard advanceAssignment(in: app),
+      openAlphaImport("Import submitted work", in: app),
+      selectAlphaFile("Alpha work", in: app)
+    else { return }
+    let workText = "Selectable PDF work fixture."
+    _ = try alphaImportPreview(containing: workText, in: app)
+    review.buttons["Use text"].tap()
+    XCTAssertTrue((app.textViews["Submitted work"].value as? String ?? "").contains(workText))
+
+    let reflectionMode = app.segmentedControls.buttons["All-in-one reflection"]
+    guard reach(reflectionMode, in: app, up: false) else { return }
+    reflectionMode.tap()
+    guard openAlphaImport("Import reflection", in: app), selectAlphaFile("Alpha reflection", in: app) else { return }
+    let reflectionText = "I will check for confounders before making a claim."
+    let importedReflectionText = try alphaImportPreview(containing: reflectionText, in: app)
+    XCTAssertEqual(importedReflectionText.value as? String, reflectionText)
+    review.buttons["Use text"].tap()
+
+    guard advanceAssignment(in: app),
+      openAlphaImport("Import feedback", in: app),
+      selectAlphaFile("Alpha feedback", in: app)
+    else { return }
+    let feedbackText = "Explain how your sample supports the claim."
+    let importedFeedbackText = try alphaImportPreview(containing: feedbackText, in: app)
+    XCTAssertEqual(importedFeedbackText.value as? String, feedbackText)
+    review.buttons["Use text"].tap()
+    guard advanceAssignment(in: app) else { return }
+    app.buttons["editor.save"].tap()
+    XCTAssertTrue(app.navigationBars["Example assignment"].waitForExistence(timeout: 5))
+    for text in [reflectionText, workText, acceptedBrief, feedbackText] {
+      let saved = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+      guard reach(saved, in: app) else { return }
+    }
+  }
+
+  private func alphaImportPreview(containing text: String, in app: XCUIApplication) throws -> XCUIElement {
+    XCTAssertTrue(app.navigationBars["Review import"].waitForExistence(timeout: 8))
+    return try XCTUnwrap(app.textViews.allElementsBoundByIndex.first {
+      ($0.value as? String ?? "").contains(text) && $0.isHittable
+    }, "The import preview did not show the expected fixture text")
+  }
+
+  private func alphaPickerItem(_ name: String, in app: XCUIApplication) -> XCUIElement {
+    app.cells.matching(NSPredicate(
+      format: "label == %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
+      name, name + ",", name + "."
+    )).firstMatch
+  }
+
+  private func isInAlphaFixtureFolder(_ app: XCUIApplication) -> Bool {
+    app.otherElements["DOC.browsingRoot Source: com.apple.FileProvider.LocalStorage, Title: Alpha Fixtures"].exists
+      || app.navigationBars["Alpha Fixtures"].exists
+  }
+
+  private func waitForAlphaFixtureFolder(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
+    let visible = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in self.isInAlphaFixtureFolder(app) }, object: nil)
+    return XCTWaiter.wait(for: [visible], timeout: timeout) == .completed
+  }
+
+  private func openAlphaImport(_ buttonName: String, in app: XCUIApplication) -> Bool {
+    let button = app.buttons[buttonName]
+    guard reach(button, in: app) else { return false }
+    button.tap()
+    if waitForAlphaFixtureFolder(app, timeout: 2) { return true }
+    let browse = app.tabBars.buttons["Browse"].firstMatch
+    if browse.exists && browse.isHittable { browse.tap() }
+    let phone = alphaPickerItem("On My iPhone", in: app)
+    if !phone.exists {
+      let backToBrowse = app.navigationBars.buttons["Browse"].firstMatch
+      if backToBrowse.exists && backToBrowse.isHittable { backToBrowse.tap() }
+    }
+    guard phone.waitForExistence(timeout: 8), phone.isHittable else {
+      XCTFail("Could not open the local Files provider for the alpha fixtures")
+      return false
+    }
+    phone.tap()
+    for label in ["UniCoach", "Alpha Fixtures"] {
+      let item = alphaPickerItem(label, in: app)
+      guard item.waitForExistence(timeout: 5), item.isHittable else {
+        XCTFail("Could not reach the temporary alpha fixture folder component " + label)
+        return false
+      }
+      item.tap()
+    }
+    let visible = waitForAlphaFixtureFolder(app, timeout: 5)
+    XCTAssertTrue(visible, "Could not open the local Alpha Fixtures directory")
+    return visible
+  }
+
+  private func selectAlphaFile(_ filename: String, in app: XCUIApplication) -> Bool {
+    XCTAssertTrue(isInAlphaFixtureFolder(app))
+    let file = alphaPickerItem(filename, in: app)
+    guard file.waitForExistence(timeout: 5) else {
+      XCTFail("Synthetic fixture is not listed: " + filename)
+      return false
+    }
+    let scrolled = scrollToAlphaFile(file, in: app)
+    return tapAlphaFile(file, in: app, scrolled: scrolled)
+  }
+
+  private func tapAlphaFile(_ file: XCUIElement, in app: XCUIApplication, scrolled: Bool) -> Bool {
+    guard isInAlphaFixtureFolder(app), file.isHittable, file.isEnabled else {
+      XCTFail("The local synthetic fixture is not selectable")
+      return false
+    }
+    let fileView = app.collectionViews["File View"]
+    let thumbnail = file.images.firstMatch
+    let navigationBar = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+    let tabs = app.tabBars["DOC.browsingModeTabBar"]
+    if scrolled, fileView.exists, fileView.value as? String == "Icon Mode", thumbnail.exists,
+      navigationBar.exists, tabs.exists
+    {
+      let frame = thumbnail.frame
+      let center = CGPoint(x: frame.midX, y: frame.midY)
+      // In the Files grid the cell includes metadata and can extend under floating controls.
+      if !frame.isEmpty && app.frame.contains(center)
+        && center.y > navigationBar.frame.maxY && center.y < tabs.frame.minY
+      {
+        thumbnail.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        return assertAlphaPickerDismissed(in: app)
+      }
+    }
+    file.tap()
+    return assertAlphaPickerDismissed(in: app)
+  }
+
+  private func assertAlphaPickerDismissed(in app: XCUIApplication) -> Bool {
+    let dismissed = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in !self.isInAlphaFixtureFolder(app) }, object: nil)
+    let completed = XCTWaiter.wait(for: [dismissed], timeout: 5) == .completed
+    XCTAssertTrue(completed, "The Files picker stayed open after the selected action")
+    return completed
+  }
+
+  private func scrollToAlphaFile(_ file: XCUIElement, in app: XCUIApplication) -> Bool {
+    guard !file.isHittable else { return false }
+    let fileView = app.collectionViews["File View"]
+    let list = fileView.exists ? fileView : app.collectionViews.firstMatch
+    for _ in 0..<4 where !file.isHittable { list.swipeUp() }
+    for _ in 0..<4 where !file.isHittable { list.swipeDown() }
+    return true
+  }
+
+  private func cancelAlphaPicker(in app: XCUIApplication) {
+    let currentPicker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+    let picker = currentPicker.exists ? currentPicker : app.navigationBars["Alpha Fixtures"]
+    let cancel = picker.buttons["Cancel"]
+    XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+    cancel.tap()
+    guard assertAlphaPickerDismissed(in: app) else { return }
+    XCTAssertTrue(app.navigationBars["Assignment"].exists)
+  }
+
+  func testAlphaBlindUnrelatedFeedback() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_MODEL_FIXTURE"] == "blind" else {
+      throw XCTSkip("Requires the blind alpha fixture in the isolated smoke store.")
+    }
+    continueAfterFailure = false
+    let app = alphaFixtureApp()
+    let expected = "Calibrate the spectrophotometer before recording the titration volumes."
+    try checkAlphaAssignmentReview(in: app, feedbackPrefix: expected, retainGoal: false)
+  }
+
+  func testAlphaGroundedAssignmentReview() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_MODEL_FIXTURE"] == "student" else {
+      throw XCTSkip("Requires the student alpha fixture in the isolated smoke store.")
+    }
+    continueAfterFailure = false
+    let app = alphaFixtureApp()
+    let expected = "Your themes are clearly organised and your ethical handling"
+    try checkAlphaAssignmentReview(in: app, feedbackPrefix: expected, retainGoal: true)
+  }
+
+  func testAlphaRetainedAppleConversation() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_MODEL_FIXTURE"] == "student" else {
+      throw XCTSkip("Requires the student alpha fixture in the isolated smoke store.")
+    }
+    continueAfterFailure = false
+    let app = alphaFixtureApp()
+    app.tabBars.buttons["AI Mentor"].tap()
+    app.buttons["mentor.ask"].tap()
+    let availability = element(app, id: "conversation.availability")
+    if availability.exists { throw XCTSkip(availability.label) }
+    let question = "How can I turn my tutor’s comments on the campus study-space report into a practical revision plan before the prototype review?"
+    let reply = "I have two 45-minute study sessions available. What should I prioritise in each, and what should I check at the end?"
+    let input = element(app, id: "conversation.input")
+    let sources = app.buttons["conversation.sources"]
+    let send = app.buttons["conversation.send"]
+    enter(question, id: "conversation.input", in: app)
+    guard dismissKeyboard("conversation.keyboardDone", in: app) else { return }
+    XCTAssertEqual(input.value as? String, question)
+    sources.tap()
+    for kind in ["work", "brief", "feedback", "reflection", "guided-reflection"] {
+      chooseSwitch(element(app, id: "question.source.assignment:" + alphaAssignmentID + ":" + kind), in: app)
+    }
+    app.buttons["conversation.useSources"].tap()
+    XCTAssertEqual(sources.label, "5 sources selected")
+    send.tap()
+    let first = element(app, id: "conversation.question.0")
+    XCTAssertTrue(first.waitForExistence(timeout: 120), "The first approved Apple request did not save")
+    XCTAssertEqual(first.label, question)
+    XCTAssertEqual(sources.label, "Add context")
+    XCTAssertFalse(send.isEnabled)
+
+    enter(reply, id: "conversation.input", in: app)
+    guard dismissKeyboard("conversation.keyboardDone", in: app) else { return }
+    XCTAssertEqual(input.value as? String, reply)
+    send.tap()
+    let second = element(app, id: "conversation.question.1")
+    XCTAssertTrue(second.waitForExistence(timeout: 120), "The approved Apple reply did not save")
+    XCTAssertEqual(second.label, reply)
+    XCTAssertFalse(send.isEnabled)
+    attachScreenshot("Alpha student retained Apple conversation", app: app)
+
+    app.terminate()
+    app.launch()
+    app.tabBars.buttons["AI Mentor"].tap()
+    let saved = app.buttons["mentor.conversation"]
+    XCTAssertTrue(saved.waitForExistence(timeout: 5))
+    saved.tap()
+    let transcript = app.scrollViews["conversation.transcript"]
+    guard reach(second, in: app, scrolling: transcript) else { return }
+    XCTAssertEqual(second.label, reply)
+    guard reach(first, in: app, scrolling: transcript, up: false) else { return }
+    XCTAssertEqual(first.label, question)
+  }
+
+  func testAlphaCalendarAcrossMonths() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_MODEL_FIXTURE"] == "student" else {
+      throw XCTSkip("Requires the student alpha fixture in the isolated smoke store.")
+    }
+    continueAfterFailure = false
+    let calendar = Calendar.current
+    guard calendar.identifier == .gregorian else {
+      throw XCTSkip("The calendar fixture uses Gregorian due dates.")
+    }
+    let fixtureMonth = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 1)))
+    let currentMonth = try XCTUnwrap(calendar.dateInterval(of: .month, for: Date())?.start)
+    let offset = try XCTUnwrap(calendar.dateComponents([.month], from: currentMonth, to: fixtureMonth).month)
+    guard abs(offset) <= 36 else {
+      throw XCTSkip("Calendar fixture is more than 36 months from the device date.")
+    }
+    let app = alphaFixtureApp()
+    let card = app.buttons["home.catalogue.assignments"]
+    guard reach(card, in: app) else { return }
+    card.tap()
+    let heading = element(app, id: "assignments.calendar")
+    guard reach(heading, in: app) else { return }
+    let monthFormat = Date.FormatStyle(
+      locale: .current, calendar: calendar, timeZone: calendar.timeZone
+    ).month(.wide).year()
+    XCTAssertEqual(heading.label, currentMonth.formatted(monthFormat))
+    if offset != 0 {
+      let direction = offset < 0 ? "previous" : "next"
+      let move = app.buttons["assignments.calendar." + direction]
+      guard reach(move, in: app) else { return }
+      for _ in 0..<abs(offset) { move.tap() }
+    }
+    XCTAssertEqual(heading.label, fixtureMonth.formatted(monthFormat))
+    let past = app.buttons["assignments.calendar.day.3"]
+    guard reach(past, in: app) else { return }
+    XCTAssertEqual(past.value as? String, "1 assignment due")
+    let far = app.buttons["assignments.calendar.day.25"]
+    guard reach(far, in: app) else { return }
+    XCTAssertEqual(far.value as? String, "1 assignment due")
+    let next = app.buttons["assignments.calendar.next"]
+    guard reach(next, in: app, up: false) else { return }
+    next.tap()
+    let followingMonth = try XCTUnwrap(calendar.date(byAdding: .month, value: 1, to: fixtureMonth))
+    XCTAssertEqual(heading.label, followingMonth.formatted(monthFormat))
+    let december = app.buttons["assignments.calendar.day.2"]
+    guard reach(december, in: app) else { return }
+    XCTAssertEqual(december.value as? String, "1 assignment due")
+    attachScreenshot("Alpha calendar dates beyond seven days", app: app)
+    december.tap()
+    let deadline = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@",
+      "assignments.calendar.assignment.", "Professional practice: individual reflection"
+    )).firstMatch
+    guard reach(deadline, in: app) else { return }
+    deadline.tap()
+    XCTAssertTrue(app.navigationBars["Professional practice: individual reflection"].waitForExistence(timeout: 5))
+  }
+
+  func testAlphaAdoptSavedReviewGoal() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_MODEL_FIXTURE"] == "student-saved-review" else {
+      throw XCTSkip("Requires the isolated student fixture with a saved Apple review and an unadopted next step.")
+    }
+    continueAfterFailure = false
+    let app = alphaFixtureApp()
+    app.navigationBars.buttons["Profile"].tap()
+    let history = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Study review")).firstMatch
+    guard reach(history, in: app) else { return }
+    history.tap()
+    XCTAssertTrue(app.navigationBars["Your feedback review"].waitForExistence(timeout: 5))
+    let create = app.buttons["goal.fromReport"]
+    guard reach(create, in: app, attempts: 14) else { return }
+    guard adoptAlphaReviewGoal(in: app, button: create) else { return }
+    attachScreenshot("Alpha adopted goal linked to Apple review", app: app)
+
+    app.terminate()
+    app.launch()
+    app.tabBars.buttons["My Progress"].tap()
+    guard reach(alphaLinkedGoal(in: app), in: app, attempts: 14) else { return }
+  }
+
+  private func alphaLinkedGoal(in app: XCUIApplication) -> XCUIElement {
+    app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+      "progress.goal.", "From: " + alphaAssignmentTitle
+    )).firstMatch
+  }
+
+  private func adoptAlphaReviewGoal(in app: XCUIApplication, button: XCUIElement) -> Bool {
+    XCTAssertTrue(button.isEnabled, "The saved review must have an unadopted next step")
+    button.tap()
+    let created = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "label == %@", "Learning goal created"), object: button)
+    XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 5), .completed)
+    XCTAssertFalse(button.isEnabled)
+    let progress = app.buttons["focus.progress"]
+    guard reach(progress, in: app) else { return false }
+    progress.tap()
+    return reach(alphaLinkedGoal(in: app), in: app, attempts: 14)
+  }
+
+  func testAlphaPopulatedNormalLaunch() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_NORMAL_FIXTURE"] == "student" else {
+      throw XCTSkip("Requires the populated fictional student fixture in the normal app store.")
+    }
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launch()
+    XCTAssertTrue(app.staticTexts["Greetings, Jordan Lee"].waitForExistence(timeout: 10))
+    XCTAssertFalse(app.buttons["profile.save"].exists)
+    attachScreenshot("Populated student Home", app: app)
+
+    app.navigationBars.buttons["Profile"].tap()
+    XCTAssertTrue(app.staticTexts["Jordan Lee"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["University of Technology Sydney"].exists)
+    XCTAssertTrue(app.staticTexts["Bachelor of Information Technology"].exists)
+    let history = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Study review")).firstMatch
+    guard reach(history, in: app) else { return }
+    history.tap()
+    XCTAssertTrue(app.navigationBars["Your feedback review"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["Apple on-device"].firstMatch.exists)
+    attachScreenshot("Populated student saved feedback review", app: app)
+    back("Profile", in: app)
+    back("Home", in: app)
+
+    let home = app.tabBars.buttons["Home"]
+    let homeSearch = app.buttons.matching(NSPredicate(
+      format: "label CONTAINS %@", "Search subjects and assignments"
+    )).firstMatch
+    guard reach(homeSearch, in: app) else { return }
+    homeSearch.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Subjects"].isSelected)
+    let search = app.searchFields.firstMatch
+    let searchButton = app.buttons["Search"].firstMatch
+    if !search.exists && searchButton.exists && searchButton.isHittable { searchButton.tap() }
+    guard reach(search, in: app, up: false, attempts: 4) else { return }
+    search.tap()
+    search.typeText("DAT202\n")
+    let analytics = app.staticTexts["Applied Data Analytics"].firstMatch
+    guard reach(analytics, in: app) else { return }
+    XCTAssertFalse(app.staticTexts["Human-Centred Design"].exists)
+    attachScreenshot("Populated student subject search by code", app: app)
+
+    guard reach(search, in: app, up: false) else { return }
+    replaceText(in: search, with: "no matching alpha subject\n")
+    let noMatch = app.staticTexts["No matching subjects."]
+    guard reach(noMatch, in: app) else { return }
+    XCTAssertFalse(analytics.exists)
+    guard reach(search, in: app, up: false) else { return }
+    search.tap()
+    let clearSearch = search.buttons["Clear text"]
+    XCTAssertTrue(clearSearch.waitForExistence(timeout: 5))
+    clearSearch.tap()
+    let closeSearch = app.navigationBars["My Learning"].buttons.matching(NSPredicate(
+      format: "label == %@ OR label == %@", "Close", "Cancel"
+    )).firstMatch
+    XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
+    closeSearch.tap()
+    let keyboardDismissed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+    XCTAssertEqual(XCTWaiter.wait(for: [keyboardDismissed], timeout: 5), .completed)
+    XCTAssertFalse(noMatch.exists)
+    for name in ["Human-Centred Design", "Applied Data Analytics", "Software Engineering Practice"] {
+      guard reach(app.staticTexts[name].firstMatch, in: app) else { return }
+    }
+    attachScreenshot("Populated student subjects", app: app)
+
+    home.tap()
+    let assignments = app.buttons["home.catalogue.assignments"]
+    guard reach(assignments, in: app) else { return }
+    assignments.tap()
+    guard reach(app.staticTexts["All assignments (5)"], in: app) else { return }
+    attachScreenshot("Populated student assignments", app: app)
+
+    home.tap()
+    let goals = app.buttons["home.catalogue.goals"]
+    guard reach(goals, in: app) else { return }
+    goals.tap()
+    let studyGoal = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+      "learning.goal.", "Before the 18 November prototype review"
+    )).firstMatch
+    guard reach(studyGoal, in: app) else { return }
+    attachScreenshot("Populated student goals", app: app)
+
+    app.tabBars.buttons["My Progress"].tap()
+    guard reach(app.staticTexts["Learning pathway status"], in: app) else { return }
+    attachScreenshot("Populated student progress", app: app)
+
+    app.tabBars.buttons["AI Mentor"].tap()
+    let conversation = app.buttons["mentor.conversation"]
+    guard reach(conversation, in: app) else { return }
+    XCTAssertTrue(conversation.label.contains("campus study-space report"))
+    conversation.tap()
+    let transcript = app.scrollViews["conversation.transcript"]
+    let second = element(app, id: "conversation.question.1")
+    guard reach(second, in: app, scrolling: transcript) else { return }
+    XCTAssertTrue(second.label.hasPrefix("I have two 45-minute study sessions available."))
+    attachScreenshot("Populated student saved Mentor conversation", app: app)
+  }
+
+  private var alphaAssignmentID: String { "0C343040-899E-5F36-9F98-6DA2C86A6027" }
+  private var alphaAssignmentTitle: String { "Campus study spaces: research report" }
+
+  private func alphaFixtureApp() -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke-preserve"]
+    app.launch()
+    XCTAssertTrue(app.tabBars.buttons["AI Mentor"].waitForExistence(timeout: 10))
+    return app
+  }
+
+  private func checkAlphaAssignmentReview(
+    in app: XCUIApplication, feedbackPrefix: String, retainGoal: Bool
+  ) throws {
+    app.tabBars.buttons["AI Mentor"].tap()
+    let assignment = app.buttons.matching(NSPredicate(
+      format: "label CONTAINS %@", alphaAssignmentTitle
+    )).firstMatch
+    guard reach(assignment, in: app) else { return }
+    assignment.tap()
+    let sourcePrefix = "source.assignment:" + alphaAssignmentID + ":"
+    chooseSwitch(element(app, id: sourcePrefix + "work"), in: app)
+    chooseSwitch(element(app, id: sourcePrefix + "feedback"), in: app)
+    XCTAssertEqual(element(app, id: sourcePrefix + "reflection").value as? String, "0")
+    let work = app.textViews["Approved text for Submitted work"]
+    let feedback = app.textViews["Approved text for Tutor feedback"]
+    guard reach(work, in: app) else { return }
+    let exactWork = try XCTUnwrap(work.value as? String)
+    XCTAssertTrue(exactWork.hasPrefix("I interviewed three commuting students"))
+    guard reach(feedback, in: app) else { return }
+    let exactFeedback = try XCTUnwrap(feedback.value as? String)
+    XCTAssertTrue(exactFeedback.hasPrefix(feedbackPrefix))
+
+    let availability = element(app, id: "mentor.availability")
+    guard reach(availability, in: app) else { return }
+    let approve = app.buttons["mentor.approve"]
+    guard reach(approve, in: app) else { return }
+    if availability.label != "Apple on-device model is available." {
+      XCTAssertFalse(approve.isEnabled)
+      throw XCTSkip(availability.label)
+    }
+    XCTAssertTrue(approve.isEnabled)
+    approve.tap()
+    let saved = app.buttons["mentor.savedReport"]
+    let alert = app.alerts["Mentor"]
+    let outcome = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in
+        alert.exists || saved.exists
+      }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [outcome], timeout: 180), .completed)
+    if alert.exists {
+      let message = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+      let result = XCTAttachment(string: message)
+      result.name = "Single Apple assignment review result"
+      result.lifetime = .keepAlways
+      add(result)
+      print("alpha_review_outcome=single_attempt_error")
+      if retainGoal { XCTFail("Grounded Apple review did not save: " + message) }
+      return
+    }
+    guard reach(saved, in: app) else { return }
+    saved.tap()
+    XCTAssertTrue(app.navigationBars["Your feedback review"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["Apple on-device"].firstMatch.exists)
+    print("alpha_review_outcome=single_attempt_saved")
+    attachScreenshot("Alpha Apple assignment review", app: app)
+
+    if retainGoal {
+      let nextStepOutcome = app.descendants(matching: .any).matching(NSPredicate(
+        format: "identifier == %@ OR label == %@",
+        "goal.fromReport", "No specific next step was identified from the feedback."
+      )).firstMatch
+      guard reach(nextStepOutcome, in: app, attempts: 14) else { return }
+      if nextStepOutcome.identifier == "goal.fromReport" {
+        guard adoptAlphaReviewGoal(in: app, button: nextStepOutcome) else { return }
+        back("Your feedback review", in: app)
+      }
+    }
+
+    let workSnapshot = element(app, id: "report.source.assignment:" + alphaAssignmentID + ":work")
+    let feedbackSnapshot = element(app, id: "report.source.assignment:" + alphaAssignmentID + ":feedback")
+    guard reach(workSnapshot, in: app, attempts: 14) else { return }
+    XCTAssertEqual(workSnapshot.label, exactWork)
+    guard reach(feedbackSnapshot, in: app) else { return }
+    XCTAssertEqual(feedbackSnapshot.label, exactFeedback)
+    let audit = element(app, id: "model.call.0")
+    guard reach(audit, in: app) else { return }
+
+    back("Review feedback", in: app)
+    app.navigationBars.buttons["Close"].tap()
+    app.navigationBars.buttons["Profile"].tap()
+    guard reach(app.staticTexts["Report history"], in: app) else { return }
+    let history = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Study review")).firstMatch
+    guard reach(history, in: app) else { return }
+    history.tap()
+    XCTAssertTrue(app.navigationBars["Your feedback review"].waitForExistence(timeout: 5))
   }
 
 }

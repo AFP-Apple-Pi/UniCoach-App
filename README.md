@@ -41,3 +41,7 @@ My Learning contains Overview, Subjects, Assignments and Goals. Subjects and Goa
 The on-device backend migrates earlier data into schema version 1 while preserving historical reports. Learning goals unify profile goals, subject goals and saved focuses; new report next steps can become linked goals. Assignments use earned and available marks, with weighted subject totals, optional semesters and chronological grade charts. A known maximum without a score remains ungraded. New coaching reports contain Keep doing, Improve and Next step, with checked tutor quotes and explicit approval for Apple on-device processing.
 
 See [device verification](Docs/DEVICE_TESTING.md) for validation and model limitations. No remote backend, sign-in or cloud upload is required.
+
+## Alpha verification
+
+The [10 November 2026 alpha report](Docs/ALPHA_TESTING.md) records the feature coverage matrix, positive and rejection cases, reproducible fictional fixtures, two fixed defects and actual model evidence. All 68 core tests and all 14 distinct physical UI workflows passed their final technical assertions. The alpha is not fully passing: Apple AI failed to detect unrelated tutor feedback and only partly followed a two-session planning request. Those first responses were retained without tuning or retrying for a better outcome.
