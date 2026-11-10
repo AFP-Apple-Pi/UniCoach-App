@@ -103,21 +103,23 @@ final class UniCoachUITests: XCTestCase {
     add(attachment)
   }
 
-  func testSyntheticOfflineFlow() throws {
+  func testSyntheticLearningFlow() throws {
     let app = XCUIApplication()
     app.launchArguments.append("-ui-smoke")
     app.launch()
     let continueButton = app.buttons["profile.save"]
     XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
     continueButton.tap()
-    app.tabBars.buttons["My Learning"].tap()
-    app.buttons["subject.add"].tap()
+    let subjectsCard = app.buttons["home.catalogue.subjects"]
+    guard reach(subjectsCard, in: app) else { return }
+    subjectsCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Subjects"].isSelected)
+    let addSubject = app.buttons["subject.add"]
+    guard reach(addSubject, in: app) else { return }
+    addSubject.tap()
     enter("Synthetic Design", id: "subject.name", in: app)
     enter("DES101", id: "subject.code", in: app)
     app.buttons["editor.save"].tap()
-    let subjectsTab = app.segmentedControls.buttons["Subjects"]
-    guard reach(subjectsTab, in: app, up: false) else { return }
-    subjectsTab.tap()
     let subject = app.staticTexts["Synthetic Design"].firstMatch
     guard reach(subject, in: app) else { return }
     subject.tap()
@@ -216,65 +218,87 @@ final class UniCoachUITests: XCTestCase {
     XCTAssertEqual(reflectionSwitch.value as? String, "0", "Reflection must remain private")
     let approvedWork = app.textViews["Approved text for Submitted work"]
     guard reach(approvedWork, in: app) else { return }
-    let engine = element(app, id: "mentor.engine")
-    guard reach(engine, in: app) else { return }
-    engine.tap()
-    app.buttons["Contextual offline (not AI)"].tap()
+    let availability = element(app, id: "mentor.availability")
+    guard reach(availability, in: app) else { return }
+    let available = availability.label == "Apple on-device model is available."
     let approve = app.buttons["mentor.approve"]
     guard reach(approve, in: app) else { return }
-    XCTAssertTrue(approve.isEnabled)
-    approve.tap()
-    let saved = app.buttons["mentor.savedReport"]
-    guard reach(saved, in: app) else { return }
-    saved.tap()
-    let expected = "You should explain how the evidence supports your claim."
-    for label in ["Keep doing", "Improve", expected, "Next step"] {
-      let item = app.staticTexts[label].firstMatch
-      guard reach(item, in: app) else { return }
-    }
-    let create = app.buttons["goal.fromReport"]
-    guard reach(create, in: app) else { return }
-    create.tap()
-    let progressLink = app.buttons["focus.progress"]
-    guard reach(progressLink, in: app) else { return }
-    back("Review feedback", in: app)
-    app.buttons["Close"].tap()
+    XCTAssertTrue(approve.label.contains("Apple AI"))
+    XCTAssertEqual(approve.isEnabled, available)
+    XCTAssertFalse(element(app, id: "mentor.engine").exists)
+    XCTAssertFalse(app.buttons["Contextual offline (not AI)"].exists)
+    app.navigationBars.buttons["Close"].tap()
     back("Subject", in: app)
-    let subjectGoal = app.buttons.matching(
-      NSPredicate(
-        format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "subject.goal.", expected)
-    ).firstMatch
+
+    let linkedGoalTitle = "Explain the evidence in my next assignment"
+    let subjectAddGoal = app.buttons["Add goal"]
+    guard reach(subjectAddGoal, in: app) else { return }
+    subjectAddGoal.tap()
+    enter(linkedGoalTitle, id: "goal.title", in: app)
+    app.buttons["goal.save"].tap()
+    let subjectGoal = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "subject.goal.", linkedGoalTitle
+    )).firstMatch
     guard reach(subjectGoal, in: app) else { return }
     XCTAssertEqual(subjectGoal.value as? String, "Not completed")
-    app.tabBars.buttons["My Progress"].tap()
-    let goalsSection = app.staticTexts["Learning goals"]
-    guard reach(goalsSection, in: app) else { return }
-    let goal = app.buttons.matching(
-      NSPredicate(
-        format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "progress.goal.", expected)
-    ).firstMatch
-    guard reach(goal, in: app) else { return }
-    XCTAssertEqual(goal.value as? String, "Not completed")
-    goal.tap()
-    XCTAssertEqual(goal.value as? String, "Completed")
-    app.tabBars.buttons["My Learning"].tap()
-    for _ in 0..<6 where subjectGoal.exists { app.swipeUp() }
-    XCTAssertFalse(subjectGoal.exists, "Completed goal should leave subject open-goal list")
-    back("My Learning", in: app)
+
     app.tabBars.buttons["Home"].tap()
     attachScreenshot("Home", app: app)
-    app.tabBars.buttons["My Learning"].tap()
-    let overview = app.segmentedControls.buttons["Overview"]
-    guard reach(overview, in: app, up: false) else { return }
-    overview.tap()
-    attachScreenshot("Learning Overview", app: app)
-    let subjects = app.segmentedControls.buttons["Subjects"]
-    subjects.tap()
-    attachScreenshot("Learning Subjects", app: app)
+    let goalsCard = app.buttons["home.catalogue.goals"]
+    guard reach(goalsCard, in: app) else { return }
+    goalsCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Goals"].isSelected)
+    let addGoal = app.buttons["goals.add"]
+    guard reach(addGoal, in: app) else { return }
+    addGoal.tap()
+    let generalGoal = "Plan a weekly study session"
+    enter(generalGoal, id: "goal.title", in: app)
+    app.buttons["goal.save"].tap()
+    let actions = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "learning.goal.actions.", generalGoal
+    )).firstMatch
+    guard reach(actions, in: app) else { return }
+    actions.tap()
+    app.buttons["Edit goal"].tap()
+    XCTAssertEqual(element(app, id: "goal.title").value as? String, generalGoal)
+    app.navigationBars.buttons["Cancel"].tap()
+    let learningGoal = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND label CONTAINS %@",
+      "learning.goal.", "learning.goal.actions.", linkedGoalTitle
+    )).firstMatch
+    guard reach(learningGoal, in: app, up: false) else { return }
+    XCTAssertEqual(learningGoal.value as? String, "Not completed")
+    learningGoal.tap()
+    XCTAssertEqual(learningGoal.value as? String, "Completed")
+    attachScreenshot("Learning Goals", app: app)
 
-    let assignments = app.segmentedControls.buttons["Assignments"]
-    guard reach(assignments, in: app, up: false) else { return }
-    assignments.tap()
+    app.tabBars.buttons["My Progress"].tap()
+    let progressGoal = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "progress.goal.", linkedGoalTitle
+    )).firstMatch
+    guard reach(progressGoal, in: app) else { return }
+    XCTAssertEqual(progressGoal.value as? String, "Completed")
+    guard reach(app.staticTexts["Learning pathway status"], in: app, up: false) else { return }
+    XCTAssertTrue(app.staticTexts["Graded assignments"].exists)
+    attachScreenshot("Progress learning pathway metrics", app: app)
+
+    app.tabBars.buttons["Home"].tap()
+    let feedbackCard = app.buttons["home.catalogue.feedback"]
+    guard reach(feedbackCard, in: app) else { return }
+    feedbackCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Assignments"].isSelected)
+    let feedbackFilter = element(app, id: "assignments.feedbackFilter")
+    guard reach(feedbackFilter, in: app) else { return }
+    XCTAssertTrue(feedbackFilter.label.contains("With feedback"))
+    guard reach(app.staticTexts["Assignments with feedback (1)"], in: app) else { return }
+
+    app.tabBars.buttons["Home"].tap()
+    let assignmentsCard = app.buttons["home.catalogue.assignments"]
+    guard reach(assignmentsCard, in: app) else { return }
+    assignmentsCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Assignments"].isSelected)
+    guard reach(feedbackFilter, in: app) else { return }
+    XCTAssertTrue(feedbackFilter.label.contains("All assignments"))
     let assignmentsBanner = app.staticTexts["Your assignments"]
     guard reach(assignmentsBanner, in: app) else { return }
     attachScreenshot("Learning Assignments dashboard", app: app)
@@ -285,19 +309,39 @@ final class UniCoachUITests: XCTestCase {
     XCTAssertTrue((subjectFilter.label + " " + (subjectFilter.value as? String ?? "")).contains("Synthetic Design"))
     guard reach(app.staticTexts["Subject assignments"], in: app) else { return }
     attachScreenshot("Learning Assignments filtered by subject", app: app)
-    guard reach(app.staticTexts["Academic calendar"], in: app) else { return }
-    XCTAssertTrue(element(app, id: "assignments.calendar").exists)
+
+    let month = element(app, id: "assignments.calendar")
+    guard reach(month, in: app) else { return }
+    let originalMonth = month.label
+    let nextMonth = app.buttons["assignments.calendar.next"]
+    let previousMonth = app.buttons["assignments.calendar.previous"]
+    nextMonth.tap()
+    XCTAssertNotEqual(month.label, originalMonth)
+    previousMonth.tap()
+    XCTAssertEqual(month.label, originalMonth)
+
+    let markedDay = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND value == %@",
+      "assignments.calendar.day.", "2 assignments due")).firstMatch
+    guard reach(markedDay, in: app) else { return }
+    markedDay.tap()
+    let dueLinks = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@", "assignments.calendar.assignment."))
+    XCTAssertEqual(dueLinks.count, 2)
+    let essayDue = dueLinks.matching(NSPredicate(format: "label == %@", "Synthetic essay")).firstMatch
+    guard reach(essayDue, in: app) else { return }
+    attachScreenshot("Marked assignment dates and selected day", app: app)
+    XCTAssertFalse(app.staticTexts["Upcoming (next 7 days)"].exists)
+    essayDue.tap()
+    XCTAssertTrue(app.navigationBars["Synthetic essay"].waitForExistence(timeout: 5))
+    back("My Learning", in: app)
+
     let assignmentRow = app.buttons.matching(NSPredicate(
       format: "label BEGINSWITH %@ AND label CONTAINS %@ AND label CONTAINS %@",
       "Synthetic essay,", "Synthetic Design", "Graded")).firstMatch
     guard reach(app.staticTexts["All assignments (2)"], in: app),
       reach(assignmentRow, in: app)
     else { return }
-
-    app.tabBars.buttons["My Progress"].tap()
-    guard reach(app.staticTexts["Learning pathway status"], in: app, up: false) else { return }
-    XCTAssertTrue(app.staticTexts["Graded assignments"].exists)
-    attachScreenshot("Progress learning pathway metrics", app: app)
   }
 
   private func enterAssignmentText(_ text: String, label: String, in app: XCUIApplication) -> Bool {

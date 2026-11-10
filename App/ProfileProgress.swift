@@ -253,25 +253,7 @@ struct ProgressScreen: View {
       updated.isCompleted.toggle()
       app.perform { try app.store.upsertGoal(updated) }
     } label: {
-      VStack(alignment: .leading, spacing: 4) {
-        Label(goal.title, systemImage: goal.isCompleted ? "checkmark.circle.fill" : "circle")
-        if let subjectID = goal.subjectID {
-          Text(app.data.subjects.first { $0.id == subjectID }?.name ?? "Former subject").font(
-            .caption
-          ).foregroundStyle(.secondary)
-        }
-        if let assignmentID = goal.originAssignmentID {
-          Text(
-            "From: "
-              + (app.data.assignments.first { $0.id == assignmentID }?.title ?? "Former assignment")
-          )
-          .font(.caption).foregroundStyle(.secondary)
-        }
-        if let status = goal.legacyFocusStatus {
-          Text("Previously reported: " + legacyStatusLabel(status)).font(.caption).foregroundStyle(
-            .secondary)
-        }
-      }
+      LearningGoalLabel(goal: goal)
     }.accessibilityIdentifier("progress.goal." + goal.id.uuidString).accessibilityValue(
       goal.isCompleted ? "Completed" : "Not completed"
     ).swipeActions {
@@ -279,6 +261,34 @@ struct ProgressScreen: View {
       Button("Edit") { editingGoal = goal }.tint(.blue)
     }
   }
+}
+
+struct LearningGoalLabel: View {
+  @Environment(AppState.self) private var app
+  let goal: LearningGoal
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label(goal.title, systemImage: goal.isCompleted ? "checkmark.circle.fill" : "circle")
+      if let subjectID = goal.subjectID {
+        Text(app.data.subjects.first { $0.id == subjectID }?.name ?? "Former subject").font(
+          .caption
+        ).foregroundStyle(.secondary)
+      }
+      if let assignmentID = goal.originAssignmentID {
+        Text(
+          "From: "
+            + (app.data.assignments.first { $0.id == assignmentID }?.title ?? "Former assignment")
+        )
+        .font(.caption).foregroundStyle(.secondary)
+      }
+      if let status = goal.legacyFocusStatus {
+        Text("Previously reported: " + legacyStatusLabel(status)).font(.caption).foregroundStyle(
+          .secondary)
+      }
+    }
+  }
+
   private func legacyStatusLabel(_ status: FocusStatus) -> String {
     switch status {
     case .workingOnIt: return "Working on it"
@@ -286,7 +296,6 @@ struct ProgressScreen: View {
     case .awaitingFeedback: return "Awaiting feedback"
     }
   }
-
 }
 
 private func semesterName(_ semester: String?) -> String {

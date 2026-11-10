@@ -13,9 +13,9 @@ Manual checklist:
 
 1. Enable Airplane Mode. Complete the optional profile, verify the library is empty, and tap Add sample subject. Open the synthetic assignment and inspect its four sections.
 2. Import a small UTF-8 file and a selectable-text PDF. Correct extracted text in the review screen before use. Confirm a scanned PDF explains that it has no selectable text.
-3. Open the mentor. Confirm no source or engine is selected. Select submitted work and tutor feedback, redact a distinctive synthetic phrase and approve the contextual offline option. Check the saved snapshot excludes the redacted phrase and labels the engine as not AI.
+3. Open the mentor. Confirm no source is selected and Apple on-device availability is shown without an engine picker. Select synthetic submitted work and tutor feedback, redact a distinctive synthetic phrase and explicitly approve Apple processing. Check the saved snapshot excludes the redacted phrase and identifies Apple on-device. If the model is unavailable, generation stays disabled; there is no offline alternative.
 4. Start and cancel a request, then reopen it and verify selection is empty. If possible while generation runs, edit or delete the source or assignment and confirm a stale report is not saved. Existing history should remain visible after deletion.
-5. On eligible iOS 26 or later hardware, check the displayed Apple model availability and explicitly select it before generation. Inspect the saved source snapshots, exact prompt and output; check guidance against the supplied text. On unsupported hardware, verify the reason and do not expect model generation.
+5. On eligible iOS 26 or later hardware, check the displayed Apple model availability and explicitly approve each request before generation. Inspect the saved source snapshots, exact prompt and output; check guidance against the supplied text. On unsupported hardware, verify the reason and do not expect model generation.
 
 ## Xcode Run signing
 
@@ -157,3 +157,20 @@ Final refresh validation:
 - Astra and both existing coding agents reviewed the mascot's Reduce Motion, active-scene and visibility guards. The welcome animation pauses under request sheets or alerts; small chat avatars stay still. Reduce Motion behavior was verified in code review, not by changing the phone's system setting. Final light and dark screenshots were visually reviewed.
 - All UI tests used the separate synthetic store. The final app was installed as an update and launched with no test arguments. The normal data file matched its immediate pre-install backup byte-for-byte, preserving existing subjects, assignments, uploads and conversations.
 - A pre-existing runtime invalid-frame diagnostic and a partial device-diagnostics collection warning appeared during testing without a failing final assertion or observed UI failure. No blocking review findings remain.
+
+
+## Learning navigation and Apple-only mentor (10 November 2026)
+
+This revision supersedes the earlier offline-engine and next-seven-days instructions above. My Learning now includes Overview, Subjects, Assignments and Goals. Subjects and Goals have their own Add buttons. Home catalogue cards open their matching Learning destinations; With feedback opens the filtered assignment list. The calendar marks all assignment due dates within the active filters, supports month navigation and lists assignments for the selected day. The separate Upcoming (next 7 days) section is removed.
+
+New mentor requests use only Apple on-device AI. Assignment review shows availability and requires explicit approval of the selected work and feedback. If Apple AI is unavailable, generation remains unavailable without substituting another engine. Historical offline reports retain their original labels and remain readable.
+
+Validation on the connected iPhone 16 running iOS 27.2:
+
+- All 59 core tests passed, including Apple-request rejection by the offline generator and legacy offline-report decoding.
+- Signed build and build-for-testing passed with Xcode 27.2, the existing bundle identifier and development team. The tested source and asset hashes matched all 66 recorded files before publication.
+- All four physical UI tests passed on the first run: largest-Dynamic-Type dark-mode composer (30.730 seconds), consent reset (33.257 seconds), actual two-turn Apple conversation (68.714 seconds), and the expanded synthetic Learning flow (179.061 seconds).
+- The Learning flow verified the four Home routes, feedback filtering and reset, subject creation, all assignment wizard stages and persistence, marks, new Apple-only review controls and availability, manual subject-linked goals and completion in Progress, two assignments on one calendar day, selected-day links, month navigation, and absence of the removed Upcoming section. The review controls were tested without invoking a new structured model review; the real model ran for the two-turn chat.
+- Goals, assignment dashboard and selected-day screenshots were reviewed. Existing consent and accessibility checks continued to pass. Tests used only the separate synthetic store.
+- The final app was installed as an update and launched without test arguments. The normal data file matched the immediate pre-install backup byte-for-byte both after tests and after normal launch. Existing records, uploads and conversations were preserved without displaying their contents.
+- Xcode emitted the expected AppIntents metadata-skip warning. Previously observed runtime frame and partial device-diagnostics warnings did not produce a failing assertion or visible blocker. SwiftLint was not installed.

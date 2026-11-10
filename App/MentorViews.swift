@@ -72,10 +72,12 @@ func modelAvailable() -> Bool {
 struct MentorView: View {
   @Environment(AppState.self) private var app
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
   @ScaledMetric(relativeTo: .body) private var approvedTextHeight: CGFloat = 140
   let assignmentID: UUID
   @State private var draft = ConsentDraft()
-  @State private var engine: MentorEngine?
+  @State private var appleAvailable = modelAvailable()
+  @State private var appleAvailability = modelAvailability()
   @State private var running = false
   @State private var task: Task<Void, Never>?
   @State private var ticket: GenerationTicket?
@@ -143,26 +145,19 @@ struct MentorView: View {
           )
           .font(.caption).foregroundStyle(.secondary)
         }.disabled(running)
-        Section("4. Choose an engine") {
-          Text(modelAvailability()).font(.subheadline).foregroundStyle(.secondary)
-          Picker("Engine", selection: $engine) {
-            Text("Choose an engine").tag(Optional<MentorEngine>.none)
-            Text("Apple on-device AI").tag(Optional(MentorEngine.appleOnDevice))
-            Text("Contextual offline (not AI)").tag(Optional(MentorEngine.contextualOffline))
-          }.pickerStyle(.menu).accessibilityIdentifier("mentor.engine")
-          Text(
-            "The offline option classifies feedback by keywords. It is not AI and can miss or misclassify feedback."
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          if engine == .appleOnDevice { MentorLargeContextNotice() }
+        Section("4. Apple on-device AI") {
+          Text(appleAvailability).font(.subheadline).foregroundStyle(.secondary)
+            .accessibilityIdentifier("mentor.availability")
+          Button("Check availability") { refreshAvailability() }
+          Text("Approving sends only your reviewed question and selected text to Apple on-device AI.")
+            .font(.caption).foregroundStyle(.secondary)
+          MentorLargeContextNotice()
         }.disabled(running)
         Section {
           if let processingProgress, running { ProgressView(processingProgress) }
-          Button(running ? "Working..." : "Approve and create report") { start() }
+          Button(running ? "Working..." : "Approve Apple AI and create report") { start() }
             .accessibilityIdentifier("mentor.approve")
-            .disabled(
-              running || !hasPair || engine == nil
-                || (engine == .appleOnDevice && !modelAvailable()))
+            .disabled(running || !hasPair || !appleAvailable)
           if running { Button("Cancel request", role: .cancel) { cancel() } }
         }
         if let report {
@@ -188,7 +183,17 @@ struct MentorView: View {
       } message: {
         Text(message ?? "")
       }
-    }.interactiveDismissDisabled(running).onDisappear { cancel() }
+    }.interactiveDismissDisabled(running)
+      .onAppear { refreshAvailability() }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .active { refreshAvailability() }
+      }
+      .onDisappear { cancel() }
+  }
+
+  private func refreshAvailability() {
+    appleAvailable = modelAvailable()
+    appleAvailability = modelAvailability()
   }
 
   private func cancel() {
@@ -198,12 +203,12 @@ struct MentorView: View {
     running = false
     processingProgress = nil
     draft = ConsentDraft()
-    engine = nil
   }
 
   private func start() {
-    guard let engine, hasPair else { return }
-    draft.engine = engine
+    refreshAvailability()
+    guard appleAvailable, hasPair else { return }
+    draft.engine = .appleOnDevice
     do {
       let request = try app.store.approve(draft: draft, assignmentID: assignmentID)
       let generation = try app.store.beginGeneration(for: request)
@@ -212,46 +217,33 @@ struct MentorView: View {
       processingProgress = nil
       task = Task { @MainActor in
         do {
-          let output: MentorOutput
-          var prompt: String?
-          var processingSteps: [ModelProcessingStep] = []
-          if request.engine == .contextualOffline {
-            output = try app.store.generateOffline(request: request)
-          } else {
-            #if compiler(>=6.2) && canImport(FoundationModels)
-            if #available(iOS 26.0, *) {
-              let passages =
-                app.store.evidencePassages(request: request).filter { $0.sourceID.hasSuffix(":work") }
-                + app.store.feedbackSentencePassages(request: request)
-              let exactPrompt = jointPrompt(request: request, passages: passages)
-              prompt = exactPrompt
-              let generated = try await generateApple(
-                request, passages: passages, prompt: exactPrompt, store: app.store,
-                ticket: generation
-              ) { progress in
-                guard ticket?.id == generation.id else { return }
-                processingProgress = progress
-              }
-              output = generated.output
-              processingSteps = generated.steps
-            } else {
-              throw UniCoachError.engineUnavailable
-            }
-            #else
-            throw UniCoachError.engineUnavailable
-            #endif
+          #if compiler(>=6.2) && canImport(FoundationModels)
+          guard #available(iOS 26.0, *) else { throw UniCoachError.engineUnavailable }
+          let passages =
+            app.store.evidencePassages(request: request).filter { $0.sourceID.hasSuffix(":work") }
+            + app.store.feedbackSentencePassages(request: request)
+          let prompt = jointPrompt(request: request, passages: passages)
+          let generated = try await generateApple(
+            request, passages: passages, prompt: prompt, store: app.store, ticket: generation
+          ) { progress in
+            guard ticket?.id == generation.id else { return }
+            processingProgress = progress
           }
+          #else
+          throw UniCoachError.engineUnavailable
+          #endif
           try Task.checkCancellation()
           guard ticket?.id == generation.id else { return }
+          #if compiler(>=6.2) && canImport(FoundationModels)
           report = try app.store.saveReport(
-            request: request, output: output, ticket: generation,
-            instructionsSnapshot: prompt == nil ? nil : mentorInstructions,
-            promptSnapshots: prompt.map { [$0] } ?? [], processingSteps: processingSteps)
+            request: request, output: generated.output, ticket: generation,
+            instructionsSnapshot: mentorInstructions, promptSnapshots: [prompt],
+            processingSteps: generated.steps)
+          #endif
           ticket = nil
           running = false
           processingProgress = nil
           draft = ConsentDraft()
-          self.engine = nil
         } catch is CancellationError {
           app.store.cancel(ticket: generation)
           if ticket?.id == generation.id {
@@ -259,7 +251,6 @@ struct MentorView: View {
             running = false
             processingProgress = nil
             draft = ConsentDraft()
-            self.engine = nil
           }
         } catch {
           app.store.cancel(ticket: generation)
@@ -267,7 +258,6 @@ struct MentorView: View {
             ticket = nil
             running = false
             processingProgress = nil
-            self.engine = nil
             message =
               error.localizedDescription
               + " Review your selection and try again with less text if needed."
@@ -275,7 +265,6 @@ struct MentorView: View {
         }
       }
     } catch {
-      self.engine = nil
       message =
         error.localizedDescription
         + " Review or shorten the selected text, then approve a new request."

@@ -48,38 +48,71 @@ let canvasColor = Color(
   }
 }
 
+enum LearningSection: String, CaseIterable {
+  case overview = "Overview"
+  case subjects = "Subjects"
+  case assignments = "Assignments"
+  case goals = "Goals"
+}
+
+enum AssignmentFeedbackFilter: String, CaseIterable {
+  case all = "All assignments"
+  case withFeedback = "With feedback"
+}
+
+enum LearningDestination: String {
+  case subjects, assignments, feedback, goals
+
+  var section: LearningSection {
+    switch self {
+    case .subjects: return .subjects
+    case .assignments, .feedback: return .assignments
+    case .goals: return .goals
+    }
+  }
+}
+
 struct RootView: View {
+  private enum AppTab { case home, learning, progress, mentor }
+
   @Environment(AppState.self) private var app
+  @State private var selectedTab: AppTab = .home
+  @State private var learningSection: LearningSection = .overview
+  @State private var assignmentFilter: AssignmentFeedbackFilter = .all
+  @State private var learningStackID = UUID()
+
   var body: some View {
-    TabView {
-      NavigationStack { HomeScreen().profileToolbar() }.tabItem {
+    TabView(selection: $selectedTab) {
+      NavigationStack { HomeScreen(openLearning: openLearning).profileToolbar() }.tabItem {
         Label {
           Text("Home")
         } icon: {
           Image("NavHome").renderingMode(.template)
         }
-      }
-      NavigationStack { SubjectsView().profileToolbar() }.tabItem {
+      }.tag(AppTab.home)
+      NavigationStack {
+        SubjectsView(mode: $learningSection, assignmentFilter: $assignmentFilter).profileToolbar()
+      }.id(learningStackID).tabItem {
         Label {
           Text("My Learning")
         } icon: {
           Image("NavLearning").renderingMode(.template)
         }
-      }
+      }.tag(AppTab.learning)
       NavigationStack { ProgressScreen().profileToolbar() }.tabItem {
         Label {
           Text("My Progress")
         } icon: {
           Image("NavProgress").renderingMode(.template)
         }
-      }
+      }.tag(AppTab.progress)
       NavigationStack { MentorLanding().profileToolbar() }.tabItem {
         Label {
           Text("AI Mentor")
         } icon: {
           Image("NavCoach").renderingMode(.template)
         }
-      }
+      }.tag(AppTab.mentor)
     }
     .sheet(isPresented: Binding(get: { !app.data.profile.onboardingComplete }, set: { _ in })) {
       ProfileEditor(profile: app.data.profile, onboarding: true).interactiveDismissDisabled()
@@ -93,6 +126,14 @@ struct RootView: View {
       Text(app.error ?? "")
     }
   }
+
+  private func openLearning(_ destination: LearningDestination) {
+    learningSection = destination.section
+    assignmentFilter = destination == .feedback ? .withFeedback : .all
+    // Home cards always open the named catalogue from its root and across all semesters.
+    learningStackID = UUID()
+    selectedTab = .learning
+  }
 }
 
 struct SubjectsView: View {
@@ -102,11 +143,9 @@ struct SubjectsView: View {
   @State private var newAssignment: Assignment?
   @State private var query = ""
   @State private var filter = "All"
-  @State private var mode: String
+  @Binding var mode: LearningSection
+  @Binding var assignmentFilter: AssignmentFeedbackFilter
   @State private var semester = "All semesters"
-  init(startInSubjects: Bool = false) {
-    _mode = State(initialValue: startInSubjects ? "Subjects" : "Overview")
-  }
   private var semesters: [String] {
     Array(Set(app.data.subjects.compactMap(\.semester).filter { !$0.isEmpty })).sorted()
   }
@@ -124,6 +163,13 @@ struct SubjectsView: View {
       !goal.isDemo
         && (goal.subjectID.map { id in realSubjects.contains { $0.id == id } }
           ?? (semester == "All semesters"))
+    }
+  }
+  private var catalogueGoals: [LearningGoal] {
+    app.data.goals.filter { goal in
+      !goal.isDemo && (semester == "All semesters"
+        || goal.subjectID == nil
+        || realSubjects.contains { $0.id == goal.subjectID })
     }
   }
   private var filtered: [Subject] {
@@ -156,45 +202,54 @@ struct SubjectsView: View {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(20).background(
           lavender, in: RoundedRectangle(cornerRadius: 24))
         Picker("Learning view", selection: $mode) {
-          Text("Overview").tag("Overview")
-          Text("Subjects").tag("Subjects")
-          Text("Assignments").tag("Assignments")
+          ForEach(LearningSection.allCases, id: \.self) { section in
+            Text(section.rawValue).tag(section)
+          }
         }.pickerStyle(.segmented)
         Picker("Semester", selection: $semester) {
           Text("All semesters").tag("All semesters")
           ForEach(semesters, id: \.self) { Text($0).tag($0) }
         }.pickerStyle(.menu)
-        if mode == "Overview" {
+        switch mode {
+        case .overview:
           LearningOverview(realSubjects: realSubjects, assignments: assignments, goals: goals)
-        } else if mode == "Subjects" {
-          LearningSubjectList(realSubjects: realSubjects, assignments: assignments, filtered: filtered, filter: $filter)
-        } else {
-          AssignmentsDashboard(subjects: realSubjects, assignments: assignments, query: query) { selectedID in
-            if let id = selectedID ?? realSubjects.first?.id { newAssignment = Assignment(subjectID: id, dueDate: nil) }
+        case .subjects:
+          LearningSubjectList(
+            realSubjects: realSubjects, assignments: assignments, filtered: filtered, filter: $filter,
+            addSubject: { editing = Subject(colorHex: "#287C76") })
+        case .assignments:
+          AssignmentsDashboard(
+            subjects: realSubjects, assignments: assignments, query: query, feedbackFilter: $assignmentFilter
+          ) { selectedID in
+            if let id = selectedID ?? realSubjects.first?.id {
+              newAssignment = Assignment(subjectID: id, dueDate: nil)
+            }
           }
+        case .goals:
+          LearningGoalsDashboard(goals: catalogueGoals)
         }
-        if app.data.subjects.isEmpty {
+        if app.data.subjects.isEmpty && (mode == .overview || mode == .subjects) {
           ContentUnavailableView(
             "No subjects yet", systemImage: "books.vertical",
             description: Text("Add a subject to start organising your work."))
+          if mode == .overview {
+            Button("Add subject", systemImage: "plus") {
+              editing = Subject(colorHex: "#287C76")
+            }.buttonStyle(.borderedProminent).accessibilityIdentifier("subject.add")
+          }
           Button("Add sample subject") {
             app.perform {
               _ = try app.store.addSampleSubject()
-              mode = "Subjects"
+              mode = .subjects
             }
           }.accessibilityIdentifier("subjects.sample").accessibilityHint(
             "Creates clearly labelled synthetic sample data")
         }
       }.padding().frame(maxWidth: 1200)
     }.background(canvasColor).searchable(text: $query, prompt: "Search subjects or assignments")
-      .onChange(of: query) { _, value in if !value.isEmpty && mode == "Overview" { mode = "Subjects" } }
-      .navigationTitle("My Learning").toolbar {
-        Button {
-          editing = Subject(colorHex: "#287C76")
-        } label: {
-          Label("Add subject", systemImage: "plus")
-        }.accessibilityIdentifier("subject.add")
-      }.sheet(item: $editing) { SubjectEditor(subject: $0) }
+      .onChange(of: query) { _, value in if !value.isEmpty && mode == .overview { mode = .subjects } }
+      .navigationTitle("My Learning")
+      .sheet(item: $editing) { SubjectEditor(subject: $0) }
       .sheet(item: $newAssignment) { AssignmentEditor(assignment: $0) }
   }
 
@@ -404,7 +459,7 @@ struct GoalEditor: View {
   var body: some View {
     NavigationStack {
       Form {
-        TextField("Goal", text: $goal.title)
+        TextField("Goal", text: $goal.title).accessibilityIdentifier("goal.title")
         Toggle("Completed", isOn: $goal.isCompleted)
       }.navigationTitle("Learning goal").toolbar {
         ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -414,7 +469,8 @@ struct GoalEditor: View {
               try app.store.upsertGoal(goal)
               dismiss()
             }
-          }.disabled(goal.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }.accessibilityIdentifier("goal.save")
+            .disabled(goal.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }
     }
@@ -557,10 +613,11 @@ struct LearningSubjectList: View {
   let assignments: [Assignment]
   let filtered: [Subject]
   @Binding var filter: String
+  let addSubject: () -> Void
+
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Subjects").font(
-        .custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
+      LearningSectionHeader(title: "Subjects", addTitle: "Add subject", addID: "subject.add", onAdd: addSubject)
       LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
         DashboardCard(title: "Your subject performance") {
           Text("\(realSubjects.count)").font(
@@ -629,14 +686,15 @@ struct AssignmentsDashboard: View {
   let subjects: [Subject]
   let assignments: [Assignment]
   let query: String
+  @Binding var feedbackFilter: AssignmentFeedbackFilter
   let addAssignment: (UUID?) -> Void
   @State private var selectedSubject: UUID?
-  @State private var calendarDate = Date()
   @State private var latestFirst = false
 
   private var visible: [Assignment] {
     assignments.filter { item in
       (selectedSubject == nil || item.subjectID == selectedSubject)
+        && (feedbackFilter == .all || !item.tutorFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         && (query.isEmpty || item.title.localizedStandardContains(query)
           || subjects.contains { $0.id == item.subjectID && ($0.name.localizedStandardContains(query) || $0.code.localizedStandardContains(query)) })
     }.sorted { left, right in
@@ -653,13 +711,6 @@ struct AssignmentsDashboard: View {
     let total = graded.compactMap(\.outOf).reduce(0, +)
     return total > 0 ? score / total * 100 : nil
   }
-  private var upcoming: [Assignment] {
-    let calendar = Calendar.current
-    let start = calendar.startOfDay(for: Date())
-    let end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
-    return visible.filter { item in item.dueDate.map { $0 >= start && $0 < end } ?? false }
-      .sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
-  }
   private var reflectedCount: Int {
     visible.filter(\.hasReflection).count
   }
@@ -668,17 +719,18 @@ struct AssignmentsDashboard: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
-      HStack {
-        Text("Assignments").font(.custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
-        Spacer()
-        Button("Add assignment", systemImage: "plus") { addAssignment(selectedSubject) }
-          .buttonStyle(.borderedProminent).disabled(subjects.isEmpty)
-          .accessibilityIdentifier("assignments.add")
-      }
+      LearningSectionHeader(
+        title: "Assignments", addTitle: "Add assignment", addID: "assignments.add",
+        addDisabled: subjects.isEmpty, onAdd: { addAssignment(selectedSubject) })
       Picker("Subject", selection: $selectedSubject) {
         Text("All subjects").tag(Optional<UUID>.none)
         ForEach(subjects) { subject in Text(subject.name).tag(Optional(subject.id)) }
       }.accessibilityIdentifier("assignments.subjectFilter")
+      Picker("Feedback", selection: $feedbackFilter) {
+        ForEach(AssignmentFeedbackFilter.allCases, id: \.self) { filter in
+          Text(filter.rawValue).tag(filter)
+        }
+      }.accessibilityIdentifier("assignments.feedbackFilter")
       LearningArtBanner(
         title: selectedSubject == nil ? "Your assignments" : "Subject assignments",
         subtitle: "Review your work, feedback and upcoming dates.", imageName: "AssignmentsHero")
@@ -693,23 +745,7 @@ struct AssignmentsDashboard: View {
           Text("Based on \(graded.count) graded assignments and their available marks.").font(.caption).foregroundStyle(.secondary)
         } else { Text("No marks entered yet.").foregroundStyle(.secondary) }
       }
-      DashboardCard(title: "Academic calendar") {
-        DatePicker("Calendar", selection: $calendarDate, displayedComponents: .date)
-          .datePickerStyle(.graphical).accessibilityIdentifier("assignments.calendar")
-        let selectedDay = visible.filter { item in item.dueDate.map { Calendar.current.isDate($0, inSameDayAs: calendarDate) } ?? false }
-        if selectedDay.isEmpty { Text("No deadlines on this day.").foregroundStyle(.secondary) }
-        ForEach(selectedDay) { item in
-          NavigationLink(item.title) { AssignmentDetail(assignmentID: item.id) }
-        }
-      }
-      DashboardCard(title: "Upcoming (next 7 days)") {
-        if upcoming.isEmpty { Text("No upcoming deadlines in the next 7 days.").foregroundStyle(.secondary) }
-        ForEach(upcoming) { item in
-          NavigationLink { AssignmentDetail(assignmentID: item.id) } label: {
-            HStack { Text(item.title); Spacer(); if let date = item.dueDate { Text(date, format: .dateTime.day().month(.abbreviated)) } }
-          }
-        }
-      }
+      AssignmentCalendar(assignments: visible)
       Text("Assignment progress").font(.title3.bold())
       LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
         StatCard(title: "Details", value: "\(visible.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) / \(visible.count)", symbol: "CalendarIcon", color: Color(red: 0.85, green: 0.92, blue: 0.89))
@@ -717,7 +753,9 @@ struct AssignmentsDashboard: View {
         StatCard(title: "Feedback", value: "\(visible.filter { !$0.tutorFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) / \(visible.count)", symbol: "FeedbackIcon", color: Color(red: 0.96, green: 0.92, blue: 0.82))
         StatCard(title: "AI analysis", value: "\(analysedCount) / \(visible.count)", symbol: "BookIcon", color: Color(red: 0.87, green: 0.91, blue: 0.89))
       }
-      DashboardCard(title: "All assignments (\(visible.count))") {
+      DashboardCard(title: feedbackFilter == .all
+        ? "All assignments (\(visible.count))" : "Assignments with feedback (\(visible.count))")
+      {
         Toggle("Latest due date first", isOn: $latestFirst)
         if visible.isEmpty { Text("No assignments in this selection.").foregroundStyle(.secondary) }
         ForEach(visible) { item in
@@ -736,9 +774,208 @@ struct AssignmentsDashboard: View {
         }
       }
     }
+    .onChange(of: subjects.map(\.id)) { _, ids in
+      if let selectedSubject, !ids.contains(selectedSubject) { self.selectedSubject = nil }
+    }
   }
 }
 
+
+private struct LearningSectionHeader: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  let title: String
+  let addTitle: String
+  let addID: String
+  var addDisabled = false
+  let onAdd: () -> Void
+
+  var body: some View {
+    let layout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+      : AnyLayout(HStackLayout())
+    layout {
+      Text(title).font(.custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
+        .accessibilityAddTraits(.isHeader)
+      if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+      Button(addTitle, systemImage: "plus", action: onAdd)
+        .buttonStyle(.borderedProminent)
+        .disabled(addDisabled)
+        .accessibilityIdentifier(addID)
+    }
+  }
+}
+
+private struct LearningGoalsDashboard: View {
+  @Environment(AppState.self) private var app
+  @State private var editingGoal: LearningGoal?
+  @State private var deletingGoal: LearningGoal?
+  let goals: [LearningGoal]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      LearningSectionHeader(title: "Goals", addTitle: "Add goal", addID: "goals.add") {
+        editingGoal = LearningGoal()
+      }
+      DashboardCard(title: "Learning goals") {
+        if goals.isEmpty {
+          Text("No learning goals in this selection.").foregroundStyle(.secondary)
+        }
+        ForEach(goals) { goal in
+          HStack(alignment: .top, spacing: 12) {
+            Button {
+              var updated = goal
+              updated.isCompleted.toggle()
+              app.perform { try app.store.upsertGoal(updated) }
+            } label: {
+              LearningGoalLabel(goal: goal)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("learning.goal." + goal.id.uuidString)
+            .accessibilityValue(goal.isCompleted ? "Completed" : "Not completed")
+            Menu {
+              Button("Edit goal", systemImage: "pencil") { editingGoal = goal }
+              Button("Delete goal", systemImage: "trash", role: .destructive) { deletingGoal = goal }
+            } label: {
+              Label("Actions for " + goal.title, systemImage: "ellipsis.circle")
+                .labelStyle(.iconOnly)
+                .frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityIdentifier("learning.goal.actions." + goal.id.uuidString)
+          }
+        }
+      }
+    }
+    .sheet(item: $editingGoal) { GoalEditor(goal: $0) }
+    .confirmationDialog(
+      "Delete this goal?",
+      isPresented: Binding(get: { deletingGoal != nil }, set: { if !$0 { deletingGoal = nil } }),
+      titleVisibility: .visible
+    ) {
+      Button("Delete goal", role: .destructive) {
+        if let deletingGoal { app.perform { try app.store.deleteGoal(id: deletingGoal.id) } }
+        deletingGoal = nil
+      }
+    }
+  }
+}
+
+private struct AssignmentCalendar: View {
+  @Environment(\.calendar) private var calendar
+  @Environment(\.locale) private var locale
+  @State private var displayedMonth = Date()
+  @State private var selectedDate = Date()
+  let assignments: [Assignment]
+
+  private var dueByDay: [Date: [Assignment]] {
+    assignments.reduce(into: [:]) { result, assignment in
+      if let dueDate = assignment.dueDate {
+        result[calendar.startOfDay(for: dueDate), default: []].append(assignment)
+      }
+    }
+  }
+
+  var body: some View {
+    let due = dueByDay
+    let selectedDay = due[calendar.startOfDay(for: selectedDate)] ?? []
+    DashboardCard(title: "Academic calendar") {
+      HStack {
+        Button("Previous month", systemImage: "chevron.backward") { moveMonth(by: -1) }
+          .labelStyle(.iconOnly)
+          .frame(minWidth: 44, minHeight: 44)
+          .accessibilityIdentifier("assignments.calendar.previous")
+        Spacer(minLength: 4)
+        Text(displayedMonth, format: monthFormat)
+          .font(.headline)
+          .multilineTextAlignment(.center)
+          .accessibilityIdentifier("assignments.calendar")
+        Spacer(minLength: 4)
+        Button("Next month", systemImage: "chevron.forward") { moveMonth(by: 1) }
+          .labelStyle(.iconOnly)
+          .frame(minWidth: 44, minHeight: 44)
+          .accessibilityIdentifier("assignments.calendar.next")
+      }
+      let symbols = calendar.veryShortStandaloneWeekdaySymbols
+      let count = symbols.count
+      if count > 0, let monthStart = calendar.dateInterval(of: .month, for: displayedMonth)?.start,
+        let days = calendar.range(of: .day, in: .month, for: monthStart)
+      {
+        let firstColumn = (calendar.component(.weekday, from: monthStart) - calendar.firstWeekday + count) % count
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 1), count: count), spacing: 3) {
+          ForEach(0..<count, id: \.self) { column in
+            Text(symbols[(column + calendar.firstWeekday - 1) % count])
+              .font(.caption.bold()).foregroundStyle(.secondary)
+              .accessibilityHidden(true)
+          }
+          ForEach(0..<firstColumn, id: \.self) { _ in
+            Color.clear.accessibilityHidden(true)
+          }
+          ForEach(Array(days.enumerated()), id: \.element) { offset, day in
+            if let date = calendar.date(byAdding: .day, value: offset, to: monthStart) {
+              let count = due[calendar.startOfDay(for: date), default: []].count
+              AssignmentCalendarDay(
+                number: day, dateLabel: date.formatted(dayFormat), assignmentCount: count,
+                isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                select: { selectedDate = date })
+            }
+          }
+        }
+      }
+      Text("Marked dates have assignments due.").font(.caption).foregroundStyle(.secondary)
+      Text(selectedDate, format: dayFormat).font(.headline)
+      if selectedDay.isEmpty {
+        Text("No assignments due on this day.").foregroundStyle(.secondary)
+      }
+      ForEach(selectedDay) { assignment in
+        NavigationLink(assignment.title) { AssignmentDetail(assignmentID: assignment.id) }
+          .accessibilityIdentifier("assignments.calendar.assignment." + assignment.id.uuidString)
+      }
+    }
+  }
+
+  private var monthFormat: Date.FormatStyle {
+    Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).month(.wide).year()
+  }
+
+  private var dayFormat: Date.FormatStyle {
+    Date.FormatStyle(date: .complete, time: .omitted, locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+  }
+
+  private func moveMonth(by offset: Int) {
+    guard let start = calendar.dateInterval(of: .month, for: displayedMonth)?.start,
+      let next = calendar.date(byAdding: .month, value: offset, to: start)
+    else { return }
+    displayedMonth = next
+    selectedDate = next
+  }
+}
+
+private struct AssignmentCalendarDay: View {
+  let number: Int
+  let dateLabel: String
+  let assignmentCount: Int
+  let isSelected: Bool
+  let select: () -> Void
+
+  var body: some View {
+    Button(action: select) {
+      VStack(spacing: 3) {
+        Text(number, format: .number).font(.subheadline.monospacedDigit())
+          .lineLimit(1).minimumScaleFactor(0.65)
+        Circle().fill(assignmentCount > 0 ? teal : .clear).frame(width: 6, height: 6)
+      }
+      .frame(maxWidth: .infinity, minHeight: 44)
+      .background(isSelected ? lavender : .clear, in: .rect(cornerRadius: 10))
+      .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(dateLabel)
+    .accessibilityValue(assignmentCount == 1 ? "1 assignment due" : "\(assignmentCount) assignments due")
+    .accessibilityAddTraits(isSelected ? .isSelected : [])
+    .accessibilityIdentifier("assignments.calendar.day.\(number)")
+  }
+}
 
 /// The supplied artwork includes its own mint background and right-aligned illustration.
 struct LearningArtBanner: View {

@@ -18,6 +18,8 @@ extension View {
 struct HomeScreen: View {
   @Environment(AppState.self) private var app
   @Environment(\.horizontalSizeClass) private var sizeClass
+  let openLearning: (LearningDestination) -> Void
+
   private var assignments: [Assignment] { app.data.assignments.filter { !$0.isDemo } }
   private var subjects: [Subject] { app.data.subjects.filter { !$0.isDemo } }
   private var reflected: Int {
@@ -47,8 +49,8 @@ struct HomeScreen: View {
         Text(app.data.profile.name.isEmpty ? "Greetings" : "Greetings, \(app.data.profile.name)")
           .font(.custom("Inter-Regular", size: 34, relativeTo: .largeTitle).weight(.bold))
           .foregroundStyle(teal)
-        NavigationLink {
-          SubjectsView(startInSubjects: true)
+        Button {
+          openLearning(.subjects)
         } label: {
           Label {
             Text("Search subjects and assignments")
@@ -62,7 +64,9 @@ struct HomeScreen: View {
           HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 20) {
               JourneyCard(assignments: assignments, reflected: reflected)
-              HomeStatsCard(subjects: subjects, assignments: assignments, feedbackCount: feedbackCount, goals: goals)
+              HomeStatsCard(
+                subjects: subjects, assignments: assignments, feedbackCount: feedbackCount,
+                goals: goals, openLearning: openLearning)
               HomeRecentCards(subjects: subjects, reports: reports)
             }
             .frame(maxWidth: .infinity)
@@ -71,7 +75,9 @@ struct HomeScreen: View {
           }
         } else {
           JourneyCard(assignments: assignments, reflected: reflected)
-          HomeStatsCard(subjects: subjects, assignments: assignments, feedbackCount: feedbackCount, goals: goals)
+          HomeStatsCard(
+            subjects: subjects, assignments: assignments, feedbackCount: feedbackCount,
+            goals: goals, openLearning: openLearning)
           HomeRecentCards(subjects: subjects, reports: reports)
           HomeGoalCards(goals: goals)
         }
@@ -166,22 +172,44 @@ struct HomeStatsCard: View {
   let assignments: [Assignment]
   let feedbackCount: Int
   let goals: [LearningGoal]
+  let openLearning: (LearningDestination) -> Void
+
   var body: some View {
     LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
-      StatCard(
+      HomeCatalogueCard(
         title: "Subjects", value: "\(subjects.count)", symbol: "BookIcon",
-        color: Color(red: 0.85, green: 0.92, blue: 0.89))
-      StatCard(
+        color: Color(red: 0.85, green: 0.92, blue: 0.89), destination: .subjects, open: openLearning)
+      HomeCatalogueCard(
         title: "Assignments", value: "\(assignments.count)", symbol: "CalendarIcon",
-        color: Color(red: 0.89, green: 0.85, blue: 0.93))
-      StatCard(
+        color: Color(red: 0.89, green: 0.85, blue: 0.93), destination: .assignments, open: openLearning)
+      HomeCatalogueCard(
         title: "With feedback", value: "\(feedbackCount)", symbol: "FeedbackIcon",
-        color: Color(red: 0.96, green: 0.92, blue: 0.82))
-      StatCard(
+        color: Color(red: 0.96, green: 0.92, blue: 0.82), destination: .feedback, open: openLearning)
+      HomeCatalogueCard(
         title: "Goals completed",
         value: "\(goals.filter(\.isCompleted).count) of \(goals.count)", symbol: "GoalIcon",
-        color: Color(red: 0.87, green: 0.91, blue: 0.89))
+        color: Color(red: 0.87, green: 0.91, blue: 0.89), destination: .goals, open: openLearning)
     }
+  }
+}
+
+private struct HomeCatalogueCard: View {
+  let title: String
+  let value: String
+  let symbol: String
+  let color: Color
+  let destination: LearningDestination
+  let open: (LearningDestination) -> Void
+
+  var body: some View {
+    Button {
+      open(destination)
+    } label: {
+      StatCard(title: title, value: value, symbol: symbol, color: color)
+        .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier("home.catalogue." + destination.rawValue)
   }
 }
 
