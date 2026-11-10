@@ -368,6 +368,88 @@ final class UniCoachUITests: XCTestCase {
     return true
   }
 
+  func testLearningSectionLayoutAndMentorBrand() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["-ui-smoke"]
+    app.launch()
+    let onboarding = app.buttons["profile.save"]
+    XCTAssertTrue(onboarding.waitForExistence(timeout: 10))
+    onboarding.tap()
+    let home = app.tabBars.buttons["Home"]
+
+    let subjectsCard = app.buttons["home.catalogue.subjects"]
+    guard reach(subjectsCard, in: app) else { return }
+    subjectsCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Subjects"].isSelected)
+    let addSubject = app.buttons["subject.add"]
+    let subjectsBanner = app.staticTexts["Your subjects"]
+    let subjectPerformance = app.staticTexts["Your subject performance"]
+    guard reach(addSubject, in: app), reach(subjectsBanner, in: app) else { return }
+    XCTAssertLessThan(addSubject.frame.midY, subjectsBanner.frame.midY)
+    XCTAssertTrue(subjectPerformance.exists)
+    XCTAssertLessThan(subjectsBanner.frame.midY, subjectPerformance.frame.midY)
+    attachScreenshot("Subjects banner at the top of Learning", app: app)
+    addSubject.tap()
+    XCTAssertTrue(element(app, id: "subject.name").waitForExistence(timeout: 5))
+    app.navigationBars.buttons["Cancel"].tap()
+    XCTAssertTrue(addSubject.waitForExistence(timeout: 5))
+    addSubject.tap()
+    let subjectName = "Layout test subject"
+    enter(subjectName, id: "subject.name", in: app)
+    app.buttons["editor.save"].tap()
+    XCTAssertTrue(addSubject.waitForExistence(timeout: 5))
+
+    home.tap()
+    let assignmentsCard = app.buttons["home.catalogue.assignments"]
+    guard reach(assignmentsCard, in: app) else { return }
+    assignmentsCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Assignments"].isSelected)
+    let assignmentBanner = app.staticTexts["Your assignments"]
+    let progress = app.staticTexts["Assignment progress"]
+    let subjectFilter = element(app, id: "assignments.subjectFilter")
+    guard reach(assignmentBanner, in: app), reach(progress, in: app) else { return }
+    XCTAssertLessThan(assignmentBanner.frame.midY, progress.frame.midY)
+    XCTAssertFalse(app.staticTexts["Overall insights"].exists)
+    XCTAssertTrue(subjectFilter.exists)
+    XCTAssertLessThan(progress.frame.midY, subjectFilter.frame.midY)
+    attachScreenshot("Assignment progress near the top of Learning", app: app)
+    guard reach(subjectFilter, in: app) else { return }
+    subjectFilter.tap()
+    app.buttons[subjectName].tap()
+    let filteredBanner = app.staticTexts["Subject assignments"]
+    guard reach(filteredBanner, in: app, up: false) else { return }
+    XCTAssertFalse(app.staticTexts["Subject insights"].exists)
+    XCTAssertLessThan(filteredBanner.frame.midY, progress.frame.midY)
+
+    home.tap()
+    let goalsCard = app.buttons["home.catalogue.goals"]
+    guard reach(goalsCard, in: app) else { return }
+    goalsCard.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Goals"].isSelected)
+    let addGoal = app.buttons["goals.add"]
+    let goalsBanner = app.staticTexts["Your goals"]
+    let goalList = app.staticTexts["Learning goals"]
+    guard reach(addGoal, in: app), reach(goalsBanner, in: app) else { return }
+    XCTAssertLessThan(addGoal.frame.midY, goalsBanner.frame.midY)
+    XCTAssertTrue(goalList.exists)
+    XCTAssertLessThan(goalsBanner.frame.midY, goalList.frame.midY)
+    attachScreenshot("Goals banner at the top of Learning", app: app)
+    addGoal.tap()
+    XCTAssertTrue(element(app, id: "goal.title").waitForExistence(timeout: 5))
+    app.navigationBars.buttons["Cancel"].tap()
+    guard reach(app.staticTexts["No learning goals in this selection."], in: app) else { return }
+
+    app.tabBars.buttons["AI Mentor"].tap()
+    app.buttons["mentor.ask"].tap()
+    let brand = app.images["conversation.brandIcon"]
+    let transcript = app.scrollViews["conversation.transcript"]
+    guard reach(brand, in: app, scrolling: transcript) else { return }
+    XCTAssertEqual(brand.label, "UniCoach app icon")
+    XCTAssertFalse(app.buttons["conversation.send"].isEnabled)
+    attachScreenshot("UniCoach app icon in Mentor welcome", app: app)
+  }
+
   func testMentorQuestionConsentResets() {
     let app = XCUIApplication()
     app.launchArguments.append("-ui-smoke")
@@ -591,6 +673,9 @@ final class UniCoachUITests: XCTestCase {
       "The largest Dynamic Type launch must make the same input measurably taller")
     let welcome = app.staticTexts["How can I help you learn?"].firstMatch
     let transcript = app.scrollViews["conversation.transcript"]
+    let brand = app.images["conversation.brandIcon"]
+    guard reach(brand, in: app, scrolling: transcript, up: false) else { return }
+    XCTAssertEqual(brand.label, "UniCoach app icon")
     guard reach(welcome, in: app, scrolling: transcript) else { return }
     let send = app.buttons["conversation.send"]
     let sources = app.buttons["conversation.sources"]

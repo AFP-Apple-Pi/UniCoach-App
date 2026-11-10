@@ -10,7 +10,7 @@ Figma's Starter-plan tool limit blocked the final Feedback and Review frames (`6
 
 Desktop sidebars and tables are adapted to native iPhone navigation, stacked cards and forms. Existing Inter typography and adaptive colors are retained. Example names, grades, dates and progress values in the design are replaced by the student's local records. UniCoach remains the app name.
 
-The design's automatic analysis on assignment confirmation is intentionally separated from saving. Students must still select and approve their sources and engine before each analysis. Native keyboard dictation remains available; the app does not add a cloud speech service. Import controls identify their supported file types.
+The design's automatic analysis on assignment confirmation is intentionally separated from saving. Students must still select and approve their sources and request before each analysis. Native keyboard dictation remains available; the app does not add a cloud speech service. Import controls identify their supported file types.
 
 ## Bundled illustrations
 
@@ -18,16 +18,16 @@ All illustration files are local assets. Figma download URLs are never used at r
 
 | Asset | Design source | Placement |
 | --- | --- | --- |
-| SubjectActionHero | `47:611`, imgImage4 | Subject action card |
+| SubjectActionHero | `47:611`, imgImage4 | Subjects tab header |
 | SubjectBookHero | `49:3177`, imgImage6 | Add/edit subject introduction |
 | AssignmentsHero | `47:2407`, imgImage7 | Assignment dashboard header |
-| AssignmentOverviewHero | `47:2407`, imgImage9 | Overall assignment insight |
-| AssignmentSubjectHero | `53:4232`, imgImage9 | Selected subject insight |
+| AssignmentOverviewHero | `47:2407`, imgImage9 | Goals tab header |
+| AssignmentSubjectHero | `53:4232`, imgImage9 | Retained artwork; former insight banner removed |
 | AssignmentDocumentHero | `61:326`, imgImage6 | Assignment wizard introduction |
-| MentorMascot | Generated illustration | Mentor welcome and message avatars |
+| MentorBrandIcon | Exact copy of the bundled AppIcon image | Static mentor welcome and message avatars |
 
-The white Scottish terrier is the AI mentor mascot. It has a gentle idle greeting animation and remains still with Reduce Motion enabled. Small message avatars use restrained styling. The mascot does not imply that a human tutor is typing. It was created using the built-in image-generation tool and saved as `App/Assets.xcassets/MentorMascot.imageset/image.png` with transparency.
+The mentor now uses the UniCoach app icon, copied unchanged into a regular image set for runtime use. Welcome and message icons are static, retain their existing frame sizes and do not imply a human tutor is present. The earlier generated terrier and its animation were removed at the user's request on 11 November 2026; its generation provenance remains in Git history.
 
-Generation prompt:
+## Requested layout refinement, 11 November 2026
 
-> Use case: stylized-concept. Asset type: transparent production mascot for UniCoach, an iPhone study mentor chat. Primary request: one friendly WHITE SCOTTISH TERRIER dog mascot. Recognizable Scottie proportions: long rectangular bearded muzzle, jaunty upright triangular ears, expressive small dark eyes beneath shaggy eyebrows, short legs, compact long body, upright short tail. White fur with delicate warm grey and cream shadows, dark charcoal nose and fine forest-green outline details. Friendly, alert, supportive personality suitable for university students. Style: polished simple flat vector-like illustration with soft shading, rounded forms, crisp readable silhouette, minimal chunky fur details. Three-quarter front view seated, head gently tilted toward viewer, small mint-green neckerchief matching forest-green and pale-mint app colors. Single dog centered in square, all ears, paws and tail fully visible with 8 percent transparent breathing room. Should remain recognizable as a 40-pixel chat avatar and a 100-pixel welcome mascot; will receive gentle breathing and greeting motion in app code. True alpha transparency, no background, no disc, no ground shadow, no scenery, no text, no watermark, no speech bubble, no owl, no props, no human features, no 3D plastic, no photorealism.
+The Assignments section now places its illustration immediately after the title and add action, followed by Assignment progress and all four status cards. Subject and feedback filters remain below the cards, followed by marks, calendar and assignment records. The Overall insights and Subject insights banners were removed. Subjects and Goals each begin with a matching illustrated header beneath their title and add action. These changes follow the user's later layout request and reuse the approved local artwork; no new Figma assets or generated artwork were needed.

@@ -666,6 +666,9 @@ struct LearningSubjectList: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       LearningSectionHeader(title: "Subjects", addTitle: "Add subject", addID: "subject.add", onAdd: addSubject)
+      LearningArtBanner(
+        title: "Your subjects", subtitle: "Review your subjects and add missing details when you are ready.",
+        imageName: "SubjectActionHero")
       LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
         DashboardCard(title: "Your subject performance") {
           Text("\(realSubjects.count)").font(
@@ -685,9 +688,6 @@ struct LearningSubjectList: View {
         Text("With feedback").tag("With feedback")
         Text("With goals").tag("With goals")
       }.pickerStyle(.menu)
-      LearningArtBanner(
-        title: "Take action", subtitle: "Review your subjects and add missing details when you are ready.",
-        imageName: "SubjectActionHero")
       DashboardCard(title: "Subjects") {
         if filtered.isEmpty && !app.data.subjects.isEmpty {
           Text("No matching subjects.").foregroundStyle(.secondary)
@@ -770,6 +770,16 @@ struct AssignmentsDashboard: View {
       LearningSectionHeader(
         title: "Assignments", addTitle: "Add assignment", addID: "assignments.add",
         addDisabled: subjects.isEmpty, onAdd: { addAssignment(selectedSubject) })
+      LearningArtBanner(
+        title: selectedSubject == nil ? "Your assignments" : "Subject assignments",
+        subtitle: "Review your work, feedback and upcoming dates.", imageName: "AssignmentsHero")
+      Text("Assignment progress").font(.title3.bold())
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
+        StatCard(title: "Details", value: "\(visible.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) / \(visible.count)", symbol: "CalendarIcon", color: Color(red: 0.85, green: 0.92, blue: 0.89))
+        StatCard(title: "Reflection", value: "\(reflectedCount) / \(visible.count)", symbol: "GoalIcon", color: Color(red: 0.89, green: 0.85, blue: 0.93))
+        StatCard(title: "Feedback", value: "\(visible.filter { !$0.tutorFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) / \(visible.count)", symbol: "FeedbackIcon", color: Color(red: 0.96, green: 0.92, blue: 0.82))
+        StatCard(title: "AI analysis", value: "\(analysedCount) / \(visible.count)", symbol: "BookIcon", color: Color(red: 0.87, green: 0.91, blue: 0.89))
+      }
       Picker("Subject", selection: $selectedSubject) {
         Text("All subjects").tag(Optional<UUID>.none)
         ForEach(subjects) { subject in Text(subject.name).tag(Optional(subject.id)) }
@@ -779,13 +789,6 @@ struct AssignmentsDashboard: View {
           Text(filter.rawValue).tag(filter)
         }
       }.accessibilityIdentifier("assignments.feedbackFilter")
-      LearningArtBanner(
-        title: selectedSubject == nil ? "Your assignments" : "Subject assignments",
-        subtitle: "Review your work, feedback and upcoming dates.", imageName: "AssignmentsHero")
-      LearningArtBanner(
-        title: selectedSubject == nil ? "Overall insights" : "Subject insights",
-        subtitle: "Track the details, reflections and feedback you have entered.",
-        imageName: selectedSubject == nil ? "AssignmentOverviewHero" : "AssignmentSubjectHero")
       DashboardCard(title: "Assignment performance") {
         if let percentage {
           Text("\(percentage.formatted(.number.precision(.fractionLength(1))))%")
@@ -794,13 +797,6 @@ struct AssignmentsDashboard: View {
         } else { Text("No marks entered yet.").foregroundStyle(.secondary) }
       }
       AssignmentCalendar(assignments: visible)
-      Text("Assignment progress").font(.title3.bold())
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
-        StatCard(title: "Details", value: "\(visible.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) / \(visible.count)", symbol: "CalendarIcon", color: Color(red: 0.85, green: 0.92, blue: 0.89))
-        StatCard(title: "Reflection", value: "\(reflectedCount) / \(visible.count)", symbol: "GoalIcon", color: Color(red: 0.89, green: 0.85, blue: 0.93))
-        StatCard(title: "Feedback", value: "\(visible.filter { !$0.tutorFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count) / \(visible.count)", symbol: "FeedbackIcon", color: Color(red: 0.96, green: 0.92, blue: 0.82))
-        StatCard(title: "AI analysis", value: "\(analysedCount) / \(visible.count)", symbol: "BookIcon", color: Color(red: 0.87, green: 0.91, blue: 0.89))
-      }
       DashboardCard(title: feedbackFilter == .all
         ? "All assignments (\(visible.count))" : "Assignments with feedback (\(visible.count))")
       {
@@ -864,6 +860,9 @@ private struct LearningGoalsDashboard: View {
       LearningSectionHeader(title: "Goals", addTitle: "Add goal", addID: "goals.add") {
         editingGoal = LearningGoal()
       }
+      LearningArtBanner(
+        title: "Your goals", subtitle: "Keep track of the goals you set for your learning.",
+        imageName: "AssignmentOverviewHero")
       DashboardCard(title: "Learning goals") {
         if goals.isEmpty {
           Text("No learning goals in this selection.").foregroundStyle(.secondary)

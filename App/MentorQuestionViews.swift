@@ -131,7 +131,6 @@ private struct MentorSessionView: View {
         answers: answers, history: history, conversationUnavailable: conversationUnavailable,
         pendingQuestion: request.running ? draft.question : nil,
         progress: request.processingProgress,
-        animateWelcomeMascot: activeSheet == nil && request.message == nil,
         onStarter: { draft.question = $0 })
       .safeAreaInset(edge: .bottom, spacing: 0) {
         MentorChatComposer(
@@ -212,7 +211,6 @@ private struct MentorChatTranscript: View {
   let conversationUnavailable: Bool
   let pendingQuestion: String?
   let progress: String?
-  let animateWelcomeMascot: Bool
   let onStarter: (String) -> Void
   @State private var scrollTarget: ScrollTarget?
 
@@ -227,7 +225,7 @@ private struct MentorChatTranscript: View {
         if conversationUnavailable {
           ContentUnavailableView("Conversation unavailable", systemImage: "bubble.left")
         } else if answers.isEmpty && pendingQuestion == nil {
-          MentorChatWelcome(animateMascot: animateWelcomeMascot, onStarter: onStarter)
+          MentorChatWelcome(onStarter: onStarter)
         }
         ForEach(Array(answers.enumerated()), id: \.element.id) { index, answer in
           MentorConversationTurnView(answer: answer, index: index)
@@ -238,7 +236,7 @@ private struct MentorChatTranscript: View {
           VStack(spacing: 12) {
             MentorUserBubble(question: pendingQuestion, identifier: "conversation.pending")
             HStack(alignment: .top, spacing: 10) {
-              MentorMascotView(placement: .avatar)
+              MentorBrandIcon(placement: .avatar)
               ProgressView(progress ?? "Preparing your request…")
                 .font(.subheadline)
                 .padding(12)
@@ -273,13 +271,12 @@ private struct MentorChatTranscript: View {
 }
 
 private struct MentorChatWelcome: View {
-  let animateMascot: Bool
   let onStarter: (String) -> Void
   private let starters = ["How can I plan my study time?", "How can I improve my next assignment?"]
 
   var body: some View {
     VStack(spacing: 12) {
-      MentorMascotView(placement: .welcome, allowsMotion: animateMascot)
+      MentorBrandIcon(placement: .welcome)
       Text("How can I help you learn?")
         .font(.custom("Inter-Regular", size: 24, relativeTo: .title2).weight(.semibold))
         .foregroundStyle(teal)
@@ -300,46 +297,22 @@ private struct MentorChatWelcome: View {
   }
 }
 
-private struct MentorMascotView: View {
+private struct MentorBrandIcon: View {
   enum Placement { case welcome, avatar }
 
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.scenePhase) private var scenePhase
   @ScaledMetric(relativeTo: .body) private var avatarSize: CGFloat = 36
-  @State private var visible = false
-
   let placement: Placement
-  var allowsMotion = false
 
   var body: some View {
-    let image = Image("MentorMascot")
+    let size = placement == .avatar ? avatarSize : 108
+    Image("MentorBrandIcon")
       .resizable()
       .scaledToFit()
-      .frame(
-        width: placement == .avatar ? avatarSize : nil,
-        height: placement == .avatar ? avatarSize : 108)
-      .accessibilityHidden(true)
-    let welcome = ZStack {
-      if allowsMotion && visible && scenePhase == .active && !reduceMotion {
-        image.phaseAnimator([false, true]) { mascot, lifted in
-          mascot
-            .rotationEffect(.degrees(lifted ? 2 : 0), anchor: .bottom)
-            .offset(y: lifted ? -4 : 0)
-        } animation: { _ in .easeInOut(duration: 2) }
-      } else {
-        image
-      }
-    }
-
-    if placement == .avatar {
-      image.background(lavender, in: .circle)
-    } else if #available(iOS 18.0, *) {
-      welcome.onScrollVisibilityChange(threshold: 0.5) { visible = $0 }
-    } else {
-      welcome
-        .onAppear { visible = true }
-        .onDisappear { visible = false }
-    }
+      .frame(width: size, height: size)
+      .clipShape(.rect(cornerRadius: size * 0.23))
+      .accessibilityLabel("UniCoach app icon")
+      .accessibilityIdentifier("conversation.brandIcon")
+      .accessibilityHidden(placement == .avatar)
   }
 }
 
@@ -368,7 +341,7 @@ private struct MentorConversationTurnView: View {
     VStack(spacing: 12) {
       MentorUserBubble(question: answer.question, identifier: "conversation.question.\(index)")
       HStack(alignment: .top, spacing: 10) {
-        MentorMascotView(placement: .avatar)
+        MentorBrandIcon(placement: .avatar)
         VStack(alignment: .leading, spacing: 6) {
           Text("Mentor").font(.caption).foregroundStyle(.secondary)
           Text(answer.answer)

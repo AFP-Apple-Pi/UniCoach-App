@@ -197,3 +197,12 @@ Observed improvements include withholding advice for unrelated or vague feedback
 The 50,000-character regression retained exact contiguous chunks covering the entire original prompt, the exact current question in the final call, and the actual output. New typed model stages preserve their real prompts, schemas and responses. The model checks its own interpretations in fresh sessions; exact quote checks and these additional calls do not provide independent semantic truth.
 
 All evaluations used fictional isolated records. The final tested app was installed as an update, launched without test arguments and remained running. Normal data matched its pre-change copy byte-for-byte. No existing student records or source snapshots were changed, no private uploads were sent for these evaluations, and no temporary file-sharing settings were used.
+
+
+## Learning headers and mentor icon, 11 November 2026
+
+The requested layout update passed a signed build on iPhone 16 with iOS 27.2 and Xcode 27.2. The focused Learning/branding test passed in 39.117 seconds, verifying the Assignments header followed by progress and then filters, absence of both old insight banners, top Subjects and Goals banners, preserved add/cancel controls and the mentor app icon. The existing largest-Dynamic-Type dark-mode mentor test passed in 29.250 seconds, including the input, request review and context controls. Both passed on their first run, and screenshots of all affected screens were reviewed.
+
+The runtime mentor icon is an exact copy of the bundled app icon. The retired dog artwork and animation were removed; welcome, pending-response and saved-message avatars use the shared static icon component. Composer and all later request/engine implementation remained byte-identical, and no core or persistence code changed. This visual update did not rerun model quality evaluations or make an AI request. The previous mentor quality findings remain applicable.
+
+The tested app was installed as an update and launched without test arguments. Normal data matched the fresh pre-update copy byte-for-byte. Tests used only the isolated fictional store. The only build warnings were the expected App Intents metadata extraction notices.
