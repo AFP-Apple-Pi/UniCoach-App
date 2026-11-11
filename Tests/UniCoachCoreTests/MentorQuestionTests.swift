@@ -57,6 +57,8 @@ final class MentorQuestionTests: XCTestCase {
 
     let saved = try await store.generateMentorAnswer(request: request, ticket: ticket) { input in
       XCTAssertEqual(input.prompt, "Question:\n\(question)\n\nNo approved context was included.")
+      XCTAssertTrue(input.conversationTurns.isEmpty)
+      XCTAssertTrue(input.historyQuestions.isEmpty)
       try store.saveProfile(.init(name: "New excluded name"))
       return "  Start by choosing one topic.\n"
     }
@@ -337,7 +339,13 @@ final class MentorQuestionTests: XCTestCase {
     let second = try await store.generateMentorAnswer(
       request: request, ticket: store.beginGeneration(for: request)
     ) { input in
-      XCTAssertTrue(input.prompt.contains(snapshot.transcript))
+      XCTAssertTrue(input.prompt.contains("Turn 1 student: \"First question\""))
+      XCTAssertTrue(input.prompt.contains("Turn 1 mentor: \"First answer\""))
+      XCTAssertTrue(input.prompt.hasSuffix("Current student request:\n\"Second question\""))
+      XCTAssertEqual(input.currentQuestion, "Second question")
+      XCTAssertEqual(input.conversationTurns, snapshot.turns)
+      XCTAssertEqual(input.historyQuestions, ["First question"])
+      XCTAssertTrue(input.sources.isEmpty)
       XCTAssertFalse(input.prompt.contains("Private synthetic source"))
       return "Second answer"
     }
@@ -508,6 +516,44 @@ final class MentorQuestionTests: XCTestCase {
       return "Reply A"
     }
     _ = try await ask("Fresh", "Fresh answer")
+  }
+
+  @MainActor func testApprovedRolesKeepMentorOfferSeparateFromStudentConstraints() async throws {
+    let store = makeStore()
+    let firstRequest = try store.approve(draft: ConsentDraft(question: "Help me revise", engine: .appleOnDevice, purpose: .mentorQuestion))
+    let first = try await store.generateMentorAnswer(request: firstRequest, ticket: store.beginGeneration(for: firstRequest)) { _ in
+      "I can outline two 45 minute sessions."
+    }
+    let snapshot = try store.conversationSnapshot(id: first.id)
+    let request = try store.approve(draft: ConsentDraft(question: "Yes", engine: .appleOnDevice, purpose: .mentorQuestion, conversation: snapshot))
+    _ = try await store.generateMentorAnswer(request: request, ticket: store.beginGeneration(for: request)) { input in
+      XCTAssertEqual(input.conversationTurns, snapshot.turns)
+      XCTAssertEqual(input.historyQuestions, ["Help me revise"])
+      XCTAssertTrue(input.routingPrompt.contains("mentor: \"I can outline two 45 minute sessions.\""))
+      XCTAssertTrue(input.routingPrompt.hasSuffix("Current student request:\n\"Yes\""))
+      XCTAssertFalse(input.currentTurnPrompt.contains("45 minute"))
+      XCTAssertTrue(input.currentTurnPrompt.hasSuffix("No additional source context was included."))
+      let proposed = StudyPlanConstraint(kind: .minutesPerSession, relation: .exact, value: 45, evidence: "45 minute", numberText: "45", unit: .minutes, origin: .history)
+      XCTAssertFalse(StudyPlanValidator.constraintsAreGrounded([proposed], currentQuestion: input.currentQuestion, historyQuestions: input.historyQuestions))
+      return "Here is a starting point."
+    }
+  }
+
+  func testNoQuestionGuardAndAuditLegacyDecoding() throws {
+    for text in ["What should I do?", "Would you like a plan", "Tell me your schedule", "Please share your work", "How much time is available", "Ready؟", "If helpful, let me know your schedule."] {
+      XCTAssertTrue(MentorResponsePolicy.containsQuestion(text), text)
+    }
+    for text in ["Start with a short review.", "Your schedule can guide the next step.", "The feedback mentions a clear argument.", "What you need is a clear goal.", "How you organise evidence matters."] {
+      XCTAssertFalse(MentorResponsePolicy.containsQuestion(text), text)
+    }
+    let old = """
+      {"kind":"final","instructions":"i","prompt":"p","output":"o","provenance":[]}
+      """
+    let decoded = try JSONDecoder().decode(ModelProcessingStep.self, from: Data(old.utf8))
+    XCTAssertNil(decoded.conversationTurns)
+    let turn = MentorConversationTurn(answerID: UUID(), question: "Question", answer: "Answer")
+    let step = ModelProcessingStep(kind: .final, instructions: "i", prompt: "p", output: "o", conversationTurns: [turn])
+    XCTAssertEqual(try JSONDecoder().decode(ModelProcessingStep.self, from: JSONEncoder().encode(step)), step)
   }
 
   @MainActor func testDeletingConversationDuringGenerationCannotResurrectIt() async throws {

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ModelProcessingKind: String, Codable { case chunk, reduction, final, relevance, findingCheck, planRouting, planExtraction, planValidation, feedbackTarget }
+public enum ModelProcessingKind: String, Codable { case chunk, reduction, final, responseRewrite, relevance, findingCheck, planRouting, planExtraction, planValidation, feedbackTarget }
 
 public struct ModelProcessingRange: Codable, Equatable {
   public let location: Int
@@ -16,10 +16,12 @@ public struct ModelProcessingStep: Codable, Equatable {
   public let provenance: [ModelProcessingRange]
   public let responseBudget: Int?
   public let schemaSnapshot: String?
-  public init(kind: ModelProcessingKind, instructions: String, prompt: String, output: String, provenance: [ModelProcessingRange] = [], responseBudget: Int? = nil, schemaSnapshot: String? = nil) {
+  public let conversationTurns: [MentorConversationTurn]?
+  public init(kind: ModelProcessingKind, instructions: String, prompt: String, output: String, provenance: [ModelProcessingRange] = [], responseBudget: Int? = nil, schemaSnapshot: String? = nil, conversationTurns: [MentorConversationTurn]? = nil) {
     self.kind = kind; self.instructions = instructions; self.prompt = prompt
     self.output = output; self.provenance = provenance
     self.responseBudget = responseBudget; self.schemaSnapshot = schemaSnapshot
+    self.conversationTurns = conversationTurns
   }
 }
 

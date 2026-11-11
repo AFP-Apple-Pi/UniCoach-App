@@ -236,7 +236,8 @@ public enum StudyPlanValidator {
   public static func explicitAllocationConstraints(
     currentQuestion: String, historyQuestions: [String]
   ) -> [StudyPlanConstraint]? {
-    guard historyQuestions.allSatisfy({ parseExplicitAllocation($0) != nil }) else { return nil }
+    let timing = #"\b(?:minutes?|mins?|hours?|hrs?|sessions?|blocks?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekdays?|weekends?|days?|weeks?)\b"#
+    guard historyQuestions.allSatisfy({ !matches(timing, in: $0) || parseExplicitAllocation($0) != nil }) else { return nil }
     return parseExplicitAllocation(currentQuestion)
   }
 
@@ -249,7 +250,8 @@ public enum StudyPlanValidator {
     if isConceptualQuestion(text) { return false }
     let lead = #"^\s*(?:(?:actually|now)\s*,?\s*)?(?:my\s+(?:availability|schedule|time)\s+(?:has\s+)?changed\s*[:,.]\s*)?(?:i\s+(?:now\s+)?(?:have|need|want|can\s+(?:study|do|fit|schedule))\s+)"#
     let allocation = #"(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s|(?=[x×*]))"#
-    let hasAllocationLead = matches(lead + allocation, in: text)
+    let embeddedLead = #"(?:^|[.!?:;]\s*)i\s+(?:now\s+)?have\s+(?:only\s+|at\s+most\s+|up\s+to\s+)?"#
+    let hasAllocationLead = (matches(lead + allocation, in: text) || matches(embeddedLead + allocation, in: text))
       && matches(#"\b(?:sessions?|blocks?|minutes?|mins?)\b|[×*]|[0-9]\s*x\s*[0-9]"#, in: text)
     let directScheduling = matches(#"^\s*(?:please\s+)?(?:help\s+me\s+)?(?:plan|schedule)\b"#, in: text)
       || matches(#"^\s*(?:can|could|would)\s+you\s+(?:help\s+me\s+)?(?:plan|schedule)\b"#, in: text)
@@ -314,6 +316,37 @@ public enum StudyPlanValidator {
       "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
       "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand",
     ])
+    // A total budget before the session count is an upper bound, not a per-session claim.
+    let reverse = #"(?:^|[.!?:;]\s*)i\s+(?:now\s+)?have\s+(?:only|at\s+most|up\s+to)\s+(?<duration>"# + number + #")\s*"# + unit + #"\s+(?:in|for|across)\s+(?<count>"# + number + #")\s+(?:study\s+)?(?:sessions?|blocks?)"# + tail
+    let countFirst = #"(?:^|[.!?:;]\s*)i\s+(?:now\s+)?have\s+(?<count>"# + number + #")\s+(?:study\s+)?(?:sessions?|blocks?)\s+(?:of|with|lasting|for)\s+(?:only|at\s+most|up\s+to)\s+(?<duration>"# + number + #")\s*"# + unit + #"(?:\s+(?<qualifier>each|total))?"# + tail
+    for (boundedPattern, boundedKind) in [(reverse, StudyPlanConstraintKind.totalMinutes), (countFirst, StudyPlanConstraintKind.minutesPerSession)] {
+    if let expression = try? NSRegularExpression(pattern: boundedPattern, options: [.caseInsensitive]),
+      let match = expression.firstMatch(in: question, range: NSRange(question.startIndex..., in: question)),
+      let matchRange = Range(match.range, in: question),
+      let countRange = Range(match.range(withName: "count"), in: question),
+      let durationRange = Range(match.range(withName: "duration"), in: question),
+      let tailRange = Range(match.range(withName: "tail"), in: question) {
+      let outside = String(question[..<matchRange.lowerBound]) + " " + String(question[tailRange])
+      let words = outside.lowercased().split { !$0.isLetter }.map(String.init)
+      guard outside.allSatisfy({ $0.isLetter || $0.isWhitespace || ",.?!:;-’'".contains($0) }),
+        words.allSatisfy({ !forbiddenTail.contains($0) }),
+        !["can't", "don't", "won't", "couldn't", "wouldn't"].contains(where: outside.lowercased().contains)
+      else { return nil }
+      let countText = String(question[countRange]), durationText = String(question[durationRange])
+      guard let count = groundedNumber(countText, in: question), (1...12).contains(count),
+        let minutes = groundedNumber(durationText, in: question), (1...1440).contains(minutes),
+        durationToken(durationText, unit: .minutes, in: question) else { return nil }
+      let qualifier: String? = boundedKind == .minutesPerSession
+        ? Range(match.range(withName: "qualifier"), in: question).map { question[$0].lowercased() } : nil
+      guard boundedKind != .minutesPerSession || count == 1 || qualifier != nil else { return nil }
+      let kind: StudyPlanConstraintKind = qualifier == "total" ? .totalMinutes : boundedKind
+      guard kind != .totalMinutes || minutes >= count else { return nil }
+      return [
+        StudyPlanConstraint(kind: .sessionCount, relation: .exact, value: count, evidence: question, numberText: countText, unit: .count, origin: .currentQuestion),
+        StudyPlanConstraint(kind: kind, relation: .maximum, value: minutes, evidence: question, numberText: durationText, unit: .minutes, origin: .currentQuestion),
+      ]
+    }
+    }
     for pattern in patterns {
       guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
         let match = expression.firstMatch(in: question, range: NSRange(question.startIndex..., in: question)),
@@ -510,8 +543,18 @@ public enum StudyPlanValidator {
       let values = Set(matching.filter { $0.1 == latest && $0.0.relation == .exact }.map { $0.0.value })
       return values.count == 1 ? values.first : nil
     }
-    guard let count = exactValue(.sessionCount), let minutes = exactValue(.minutesPerSession) else { return nil }
-    return (count, minutes)
+    guard let count = exactValue(.sessionCount), count > 0 else { return nil }
+    if let minutes = exactValue(.minutesPerSession) { return (count, minutes) }
+    let perSession = ranked.filter { $0.0.kind == .minutesPerSession }
+    if let latest = perSession.map(\.1).max(),
+      let maximum = perSession.filter({ $0.1 == latest && $0.0.relation == .maximum }).map({ $0.0.value }).min() {
+      return (count, maximum)
+    }
+    let totals = ranked.filter { $0.0.kind == .totalMinutes }
+    guard let latest = totals.map(\.1).max() else { return nil }
+    let upper = totals.filter { $0.1 == latest && ($0.0.relation == .maximum || $0.0.relation == .exact) }.map { $0.0.value }
+    guard let total = upper.min(), total >= count else { return nil }
+    return (count, total / count)
   }
 
   /// Checks exact numeric and unit grounding before the plan-writing model is called.
@@ -557,7 +600,7 @@ public enum StudyPlanValidator {
     else { return nil }
     let product = count.multipliedReportingOverflow(by: minutes)
     guard !product.overflow, product.partialValue > total else { return nil }
-    return "If I understand your limits correctly, these requirements need at least \(product.partialValue) minutes, but the available total is \(total) minutes. Which limit would you like to change?"
+    return "If I understand your limits correctly, these requirements need at least \(product.partialValue) minutes, but the available total is \(total) minutes. The plan would need fewer sessions, shorter sessions, or more total time."
   }
 
   private static func groundedConstraints(

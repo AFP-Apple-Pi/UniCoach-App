@@ -75,3 +75,14 @@ python3 AppTests/Fixtures/make_mentor_fixture.py mixed /private/tmp/mentor-evalu
 For a review case set `UNICOACH_MENTOR_EVAL=review` and run `testMentorEvaluationReview`. It approves the exact work and feedback once and preserves either the saved report or the first error. For a chat case set `UNICOACH_MENTOR_EVAL=chat`, `UNICOACH_MENTOR_EVAL_QUESTION`, and, when specified in the manifest, `UNICOACH_MENTOR_EVAL_FOLLOWUP`. Set `UNICOACH_MENTOR_EVAL_PAIR=1` for cases marked `pair` and run `testMentorEvaluationChat`. The first turn selects only the designated work and feedback in paired cases. The follow-up approves visible history with no new sources. For an isolated long-context smoke test, set `UNICOACH_MENTOR_EVAL_SOURCES=work` with the preloaded long work fixture.
 
 Export the isolated store and result bundle before replacing the fixture. The UI cases verify approval, persistence and exact snapshots where applicable. Evaluate relevance, proposed tasks, durations and completion checks separately against the predeclared expectations, including unsuccessful first outputs. These cases skip without their opt-in environment.
+
+## Mentor follow-up evaluations
+
+`mentor-followup-evaluations.json` records the fictional conversation, dialogue prompts and semantic expectations before generation. Create a new isolated fixture for either case:
+
+```sh
+python3 AppTests/Fixtures/make_followup_fixture.py legacy /private/tmp/mentor-legacy.json
+python3 AppTests/Fixtures/make_followup_fixture.py live /private/tmp/mentor-live.json
+```
+
+The legacy fixture contains one explicitly fictional, offline-labelled historical turn with no source snapshots. The live fixture starts with no mentor history. Copy the chosen file to the isolated `ui-smoke.json` store using the command above, not to the normal store. Follow the manifest's per-turn source selections, retain each first response and evaluate it against the stated expectations. The generator refuses to overwrite an existing output file.

@@ -1,0 +1,78 @@
+{
+  "purpose": "Predeclared semantic acceptance for Apple mentor follow-up handling. All content is fictional. Evaluate meaning, not exact wording.",
+  "sourceFixture": "AppTests/Fixtures/student.json",
+  "sourceAssignment": "Campus study spaces: research report",
+  "rules": [
+    "Use isolated test store only.",
+    "Retain every first-attempt model output, including failures.",
+    "No new mentor answer may ask a question or solicit a reply.",
+    "Do not count a generic fallback, paraphrase of the first answer, or merely different text as semantic success.",
+    "Only explicitly approved sources on the first new dialogue turn; later turns approve visible history only. Do not silently reuse original private source snapshots.",
+    "No invented participant quotations, scores, deadlines or availability."
+  ],
+  "legacyOffer": {
+    "history": [
+      {
+        "student": "My tutor liked my themes and ethics, but wants clearer evidence for each design requirement and a clearer distinction between participant observations and my interpretations. How should I improve?",
+        "mentor": "Keep the clear themes and careful handling of participant notes. For the next revision, connect each proposed feature to an anonymised observation, label your interpretations separately, and explain how stale availability data could mislead students. Would you like a concrete sequence of revision steps?"
+      }
+    ],
+    "message": "Yes",
+    "expected": [
+      "Interpret Yes as acceptance of the immediately preceding offer.",
+      "Provide an actionable revision sequence using the visible advice, without repeating the original evaluation.",
+      "Give unscheduled steps because no time budget was supplied.",
+      "Do not ask another question."
+    ]
+  },
+  "liveDialogue": [
+    {
+      "turn": 1,
+      "message": "How did I do on this campus study-spaces report, and what should I improve for my next assignment?",
+      "sources": [
+        "Assignment brief",
+        "Submitted work",
+        "Tutor feedback"
+      ],
+      "expected": [
+        "Identify a supported strength and a concrete improvement from the approved material.",
+        "Keep feedback grounded, acknowledge no numerical grade is supplied if discussing results.",
+        "No questions or offer requiring an answer."
+      ]
+    },
+    {
+      "turn": 2,
+      "message": "Turn that advice into three practical revision steps I can follow.",
+      "sources": [],
+      "expected": [
+        "Give three actionable steps that operationalise the preceding advice.",
+        "Add concrete actions or completion checks rather than restating performance.",
+        "Do not invent durations or ask for availability."
+      ]
+    },
+    {
+      "turn": 3,
+      "message": "Should I use the same approach for a statistics assignment about transport delays? Explain what I should keep and what I should change.",
+      "sources": [],
+      "expected": [
+        "Explicitly address transfer to a statistics assignment.",
+        "Identify at least one reusable principle such as evidence-to-claim traceability or stating limitations.",
+        "Identify an adaptation such as quantitative analysis, data checks, labelled charts or uncertainty instead of interviewing/coding themes.",
+        "Treat this as general advice; do not claim access to an unapproved statistics submission.",
+        "Do not repeat only campus-report feedback."
+      ]
+    },
+    {
+      "turn": 4,
+      "message": "Back to the campus report: I now have only 20 minutes in one session. Give me a revision plan that fits, prioritising the evidence behind the power-access requirement.",
+      "sources": [],
+      "expected": [
+        "Return to the campus report and prioritise evidence supporting power access.",
+        "Respect one session and a total limit of 20 minutes; no added days or extra sessions.",
+        "Give a concrete task and observable completion check.",
+        "Use existing approved visible information without fabricating quotations or claiming new interviews.",
+        "No questions or request for another reply."
+      ]
+    }
+  ]
+}
