@@ -77,6 +77,7 @@ struct AssignmentDetail: View {
               item.dueDate.map { "Due \($0.formatted(date: .abbreviated, time: .omitted))" }
                 ?? "No due date")
           }
+          ImportedDocumentSources(references: item.sourceReferences)
         }.navigationTitle(item.title).navigationBarTitleDisplayMode(.inline).toolbar {
           Menu {
             Button("Edit") { editing = item }.accessibilityIdentifier("assignment.edit")
@@ -123,6 +124,8 @@ struct AssignmentEditor: View {
   @State private var importerPresented = false
   @State private var imported: ImportedText?
   @State private var importError: String?
+  @State private var showDocumentImport = false
+  @State private var documentSaved = false
   @FocusState private var focusedField: EditorField?
   private enum EditorField { case title, score, outOf, brief, work, feedback, reflection, weighting, target, stage, approach, challenges, collaboration, rubric }
   enum ImportTarget { case brief, work, feedback, reflection }
@@ -145,8 +148,14 @@ struct AssignmentEditor: View {
         if step == 0 {
           Section("Start with basics") {
             Image("AssignmentDocumentHero").resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 130).accessibilityHidden(true)
-            Text("Add your assignment details. You can type, use keyboard dictation, or import a text file or PDF.")
+            Text("Add your assignment details. You can type or use keyboard dictation.")
               .font(.caption).foregroundStyle(.secondary)
+            if !app.data.assignments.contains(where: { $0.id == assignment.id }) {
+              Button("Import PDF or photo", systemImage: "doc.viewfinder") {
+                focusedField = nil
+                showDocumentImport = true
+              }.accessibilityIdentifier("assignment.importDocument")
+            }
             TextField("Assignment title", text: $assignment.title).focused($focusedField, equals: .title)
               .accessibilityIdentifier("assignment.title")
             Picker("Subject", selection: $assignment.subjectID) {
@@ -352,7 +361,15 @@ struct AssignmentEditor: View {
         Text(importError ?? "")
       }
     }
+    .sheet(isPresented: $showDocumentImport, onDismiss: {
+      if documentSaved { dismiss() }
+    }) {
+      DocumentImportView(entry: .assignment, preferredSubjectID: assignment.subjectID) {
+        documentSaved = true
+      }
+    }
   }
+
   private func guidedQuestion(_ title: String, prompt: String, text: Binding<String>, field: EditorField) -> some View {
     DisclosureGroup(title) {
       Text(prompt).font(.caption).foregroundStyle(.secondary)

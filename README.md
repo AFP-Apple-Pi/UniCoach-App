@@ -32,7 +32,11 @@ Feedback reviews first check what each tutor comment refers to, whether it relat
 
 For explicit study allocations, the app builds session slots from grounded counts and durations, then asks Apple AI for a task and end check in each. A follow-up can change the allocation. Additional constraints are checked or clarified, and incompatible time limits are explained rather than silently changed. Ordinary questions stay conversational. See the [mentor quality report](Docs/MENTOR_QUALITY.md) for supported cases, first-attempt evidence and remaining errors.
 
-Imports support UTF-8 text and PDFs containing selectable text, up to 2 MB and 100,000 extracted characters. Scanned PDFs need transcription before import. Review the extracted text before using it.
+Add subject and Add assignment share **Import PDF or photo**. Choose a PDF, JPG or PNG from Files, or an image from Photos. UniCoach reads selectable PDF text and uses on-device OCR for images and scanned pages. Review the subject details, select and edit discovered assignments, then save them together. Missing deadlines stay unset; assessment weighting never becomes a personal mark. Likely subject and assignment matches are shown for review, and changing an existing subject requires an explicit update choice. Saved records retain source filenames, page references and extracted excerpts.
+
+For layouts the local parser cannot structure, **Review text for Apple suggestions** lets you approve the exact extracted text for on-device AI. Suggestions remain editable and are never saved automatically. This optional step requires a ready Apple model and text that fits its runtime context budget; shorten the approved excerpt if needed. Document reading supports files up to 24 MB, 80 PDF pages and 100,000 extracted characters. See [document import and verification](Docs/DOCUMENT_IMPORT.md).
+
+The separate text-import controls inside assignment brief, submitted work, tutor feedback and reflection fields continue to support UTF-8 text and selectable-text PDFs up to 2 MB and 100,000 characters. Those field imports do not perform OCR. Review extracted text before using it.
 
 Run `swift test` for core tests. For manual verification, use only synthetic data, enable Airplane Mode, add the sample explicitly, and inspect the assignment and consent flow. Reports remain in local history after source edits or deletion. The UI smoke test uses a separate disposable synthetic data file and never resets the normal store.
 

@@ -82,6 +82,63 @@ import Observation
     }
     try commit(n)
   }
+  public func matchingImportSubjects(_ subject: Subject) -> [Subject] {
+    let code = subject.code.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !code.isEmpty else { return [] }
+    func normalizedSession(_ value: String?) -> String {
+      (value ?? "").lowercased().split(whereSeparator: \.isWhitespace)
+        .filter { $0 != "session" }.joined(separator: " ")
+    }
+    return data.subjects.filter {
+      $0.code.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare(code) == .orderedSame
+        && normalizedSession($0.semester) == normalizedSession(subject.semester)
+    }
+  }
+  public func matchingImportAssignments(_ assignments: [Assignment], subjectID: UUID) -> [Assignment] {
+    let titles = assignments.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    return data.assignments.filter { existing in
+      existing.subjectID == subjectID && titles.contains {
+        $0.localizedCaseInsensitiveCompare(existing.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+      }
+    }
+  }
+  @discardableResult
+  public func commitDocumentImport(subject: Subject, assignments: [Assignment], existingSubjectID: UUID?, updateExistingSubject: Bool, allowDuplicates: Bool) throws -> UUID {
+    guard subject.credits.isFinite && subject.credits >= 0 else { throw UniCoachError.invalidCredits }
+    var next = data
+    let subjectID: UUID
+    if let existingSubjectID {
+      guard let index = next.subjects.firstIndex(where: { $0.id == existingSubjectID }) else { throw UniCoachError.invalidRelationship }
+      subjectID = existingSubjectID
+      if updateExistingSubject {
+        var existing = next.subjects[index]
+        existing.code = subject.code; existing.name = subject.name; existing.credits = subject.credits
+        existing.semester = subject.semester; existing.description = subject.description
+        existing.sourceReferences = subject.sourceReferences
+        next.subjects[index] = existing
+      }
+    } else {
+      guard !next.subjects.contains(where: { $0.id == subject.id }) else { throw UniCoachError.duplicateImport }
+      if !allowDuplicates && !matchingImportSubjects(subject).isEmpty { throw UniCoachError.duplicateImport }
+      subjectID = subject.id
+      var added = subject
+      added.academicGoal = ""
+      next.subjects.append(added)
+    }
+    if !allowDuplicates && !matchingImportAssignments(assignments, subjectID: subjectID).isEmpty { throw UniCoachError.duplicateImport }
+    let ids = assignments.map(\.id)
+    guard Set(ids).count == ids.count, Set(ids).isDisjoint(with: Set(next.assignments.map(\.id))) else { throw UniCoachError.duplicateImport }
+    for incoming in assignments {
+      if let weight = incoming.weighting, !weight.isFinite || weight < 0 || weight > 100 { throw UniCoachError.invalidGrade }
+      var clean = Assignment(id: incoming.id, subjectID: subjectID, title: incoming.title, brief: incoming.brief,
+        dueDate: incoming.dueDate, createdAt: incoming.createdAt, collaborationType: incoming.collaborationType,
+        assignmentFormat: incoming.assignmentFormat, weighting: incoming.weighting, sourceReferences: incoming.sourceReferences)
+      clean.isDemo = incoming.isDemo
+      next.assignments.append(clean)
+    }
+    try commit(next)
+    return subjectID
+  }
   public func deleteSubject(id: UUID) throws {
     var n = data
     n.subjects.removeAll { $0.id == id }

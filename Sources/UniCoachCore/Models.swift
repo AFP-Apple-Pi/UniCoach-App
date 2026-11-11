@@ -40,10 +40,12 @@ public struct Subject: Codable, Identifiable, Equatable {
   public var isDemo: Bool
   public var semester: String?
   public var description: String
+  public var sourceReferences: [DocumentSourceReference]
   public init(
     id: UUID = UUID(), code: String = "", name: String = "", credits: Double = 0,
     tutor: String = "", colorHex: String = "#6750A4", academicGoal: String = "",
-    isDemo: Bool = false, semester: String? = nil, description: String = ""
+    isDemo: Bool = false, semester: String? = nil, description: String = "",
+    sourceReferences: [DocumentSourceReference] = []
   ) {
     self.id = id
     self.code = code
@@ -55,9 +57,10 @@ public struct Subject: Codable, Identifiable, Equatable {
     self.isDemo = isDemo
     self.semester = semester
     self.description = description
+    self.sourceReferences = sourceReferences
   }
   private enum CodingKeys: String, CodingKey {
-    case id, code, name, credits, tutor, colorHex, academicGoal, isDemo, semester, description
+    case id, code, name, credits, tutor, colorHex, academicGoal, isDemo, semester, description, sourceReferences
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -71,6 +74,7 @@ public struct Subject: Codable, Identifiable, Equatable {
     isDemo = try c.decode(Bool.self, forKey: .isDemo)
     semester = try c.decodeIfPresent(String.self, forKey: .semester)
     description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+    sourceReferences = try c.decodeIfPresent([DocumentSourceReference].self, forKey: .sourceReferences) ?? []
   }
   public func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -83,6 +87,7 @@ public struct Subject: Codable, Identifiable, Equatable {
     try c.encode(isDemo, forKey: .isDemo)
     try c.encodeIfPresent(semester, forKey: .semester)
     if !description.isEmpty { try c.encode(description, forKey: .description) }
+    if !sourceReferences.isEmpty { try c.encode(sourceReferences, forKey: .sourceReferences) }
   }
 }
 public struct Assignment: Codable, Identifiable, Equatable {
@@ -98,6 +103,7 @@ public struct Assignment: Codable, Identifiable, Equatable {
   public var submittedWork: String
   public var collaborationType: String, assignmentFormat: String, targetGrade: String
   public var weighting: Double?
+  public var sourceReferences: [DocumentSourceReference]
   public var currentStage: String, approach: String, challenges: String, collaboration: String, rubric: String
   public var hasReflection: Bool {
     [reflection, currentStage, approach, challenges, collaboration, rubric].contains {
@@ -124,7 +130,7 @@ public struct Assignment: Codable, Identifiable, Equatable {
     outOf: Double? = nil, createdAt: Date? = Date(), collaborationType: String = "",
     assignmentFormat: String = "", targetGrade: String = "", weighting: Double? = nil,
     currentStage: String = "", approach: String = "", challenges: String = "",
-    collaboration: String = "", rubric: String = ""
+    collaboration: String = "", rubric: String = "", sourceReferences: [DocumentSourceReference] = []
   ) {
     self.id = id
     self.subjectID = subjectID
@@ -147,11 +153,12 @@ public struct Assignment: Codable, Identifiable, Equatable {
     self.challenges = challenges
     self.collaboration = collaboration
     self.rubric = rubric
+    self.sourceReferences = sourceReferences
   }
   private enum CodingKeys: String, CodingKey {
     case id, subjectID, title, brief, dueDate, createdAt, grade, score, outOf, tutorFeedback,
       reflection, isDemo, submittedWork, collaborationType, assignmentFormat, targetGrade,
-      weighting, currentStage, approach, challenges, collaboration, rubric
+      weighting, currentStage, approach, challenges, collaboration, rubric, sourceReferences
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -177,6 +184,7 @@ public struct Assignment: Codable, Identifiable, Equatable {
     challenges = try c.decodeIfPresent(String.self, forKey: .challenges) ?? ""
     collaboration = try c.decodeIfPresent(String.self, forKey: .collaboration) ?? ""
     rubric = try c.decodeIfPresent(String.self, forKey: .rubric) ?? ""
+    sourceReferences = try c.decodeIfPresent([DocumentSourceReference].self, forKey: .sourceReferences) ?? []
   }
   public func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -201,6 +209,7 @@ public struct Assignment: Codable, Identifiable, Equatable {
     if !challenges.isEmpty { try c.encode(challenges, forKey: .challenges) }
     if !collaboration.isEmpty { try c.encode(collaboration, forKey: .collaboration) }
     if !rubric.isEmpty { try c.encode(rubric, forKey: .rubric) }
+    if !sourceReferences.isEmpty { try c.encode(sourceReferences, forKey: .sourceReferences) }
   }
 }
 public struct LearningGoal: Codable, Identifiable, Equatable {
@@ -691,7 +700,7 @@ public struct GenerationTicket: Hashable {
 }
 public enum UniCoachError: LocalizedError, Equatable {
   case invalidQuestion, noSources, emptySource, contextTooLong, sourceChanged, invalidEvidence,
-    cancelled, invalidRelationship, invalidGrade, invalidCredits, engineUnavailable, emptyAnswer, contextProcessingFailed
+    cancelled, invalidRelationship, invalidGrade, invalidCredits, duplicateImport, engineUnavailable, emptyAnswer, contextProcessingFailed
   public var errorDescription: String? {
     switch self {
     case .contextProcessingFailed: return "The approved material could not be processed within the on-device model limits. Try a smaller request."
@@ -704,6 +713,7 @@ public enum UniCoachError: LocalizedError, Equatable {
     case .cancelled: return "This request was cancelled or is no longer active."
     case .invalidRelationship: return "The linked subject could not be found."
     case .invalidCredits: return "Enter a valid nonnegative number of credits."
+    case .duplicateImport: return "Possible duplicate records need your confirmation before importing."
     case .invalidGrade:
       return
         "Enter a positive total. If marks are entered, they must be between zero and the total."

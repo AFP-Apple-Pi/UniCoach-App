@@ -1009,6 +1009,144 @@ final class UniCoachUITests: XCTestCase {
     XCTAssertFalse(element(app, id: "conversation.question.0").exists)
   }
 
+  func testDocumentImportPDFAndScreenshots() throws {
+    guard ProcessInfo.processInfo.environment["UNICOACH_RUN_DOCUMENT_IMPORT"] == "1" else {
+      throw XCTSkip("Requires the three academic document fixtures copied to the app container.")
+    }
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    let pdf = "Subject outline.pdf"
+    let jpeg = "Canvas assessment.jpg"
+    let png = "Subject screenshot.png"
+    let subject = "Human-Centred Design Research Methods"
+    let start = ProcessInfo.processInfo.environment["UNICOACH_DOCUMENT_IMPORT_START"] ?? "pdf"
+    XCTAssertTrue(["pdf", "jpg", "png"].contains(start))
+    let addSubject = app.buttons["subject.add"]
+    let name = element(app, id: "documentImport.subject.name")
+
+    if start == "pdf" {
+      launchDocumentFixture(pdf, reset: true, in: app)
+      let onboarding = app.buttons["profile.save"]
+      XCTAssertTrue(onboarding.waitForExistence(timeout: 10))
+      onboarding.tap()
+      guard openDocumentImportSubjects(in: app) else { return }
+      guard reach(addSubject, in: app) else { return }
+      addSubject.tap()
+      guard openDocumentReview(pdf, entry: "subject.importDocument", in: app) else { return }
+      guard reach(name, in: app) else { return }
+      XCTAssertEqual(name.value as? String, subject)
+      XCTAssertEqual(element(app, id: "documentImport.subject.code").value as? String, "32405")
+      XCTAssertEqual(element(app, id: "documentImport.subject.credits").value as? String, "6")
+      XCTAssertEqual(element(app, id: "documentImport.subject.session").value as? String, "Spring Session 2026")
+      for (title, weight) in [
+        ("Quiz on subject", "10"), ("Poster on interviews", "30"),
+        ("Short report on probe design", "10"), ("Presentation of analysis, short paper and video", "50"),
+      ] {
+        guard checkDocumentAssignment(title, weight: weight, due: "No due date", in: app) else { return }
+      }
+      attachScreenshot("PDF import review", app: app)
+      app.buttons["documentImport.save"].tap()
+      guard reach(app.staticTexts[subject].firstMatch, in: app) else { return }
+    }
+
+    if start != "png" {
+      launchDocumentFixture(jpeg, reset: false, in: app)
+      guard openDocumentImportSubjects(in: app) else { return }
+      let savedSubject = app.staticTexts[subject].firstMatch
+      guard reach(savedSubject, in: app) else { return }
+      savedSubject.tap()
+      let addAssignment = app.buttons["subject.addAssignment"]
+      guard reach(addAssignment, in: app) else { return }
+      addAssignment.tap()
+      guard openDocumentReview(jpeg, entry: "assignment.importDocument", in: app) else { return }
+      let apple = app.buttons["documentImport.appleSuggestions"]
+      guard reach(apple, in: app) else { return }
+      apple.tap()
+      let approval = app.navigationBars["Approve source text"]
+      XCTAssertTrue(approval.waitForExistence(timeout: 5))
+      let text = element(app, id: "documentImport.appleText")
+      XCTAssertTrue((text.value as? String ?? "").contains("Research synthesis memo"))
+      let approve = app.buttons["documentImport.approveApple"]
+      XCTAssertTrue(approve.isEnabled)
+      approve.tap()
+      let error = app.alerts["Apple suggestions"]
+      let outcome = XCTNSPredicateExpectation(
+        predicate: NSPredicate { _, _ in !approval.exists || error.exists }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [outcome], timeout: 90), .completed)
+      if error.exists {
+        XCTFail(error.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " "))
+        return
+      }
+      XCTAssertTrue(app.navigationBars["Review document"].exists)
+      guard checkDocumentAssignment("Research synthesis memo", weight: "20", due: "20", in: app) else { return }
+      let destination = element(app, id: "documentImport.destination")
+      guard reach(destination, in: app, up: false) else { return }
+      XCTAssertTrue((destination.label + " " + (destination.value as? String ?? "")).contains("32405"))
+      XCTAssertEqual(element(app, id: "documentImport.updateSubject").value as? String, "0")
+      attachScreenshot("JPG import review", app: app)
+      app.buttons["documentImport.save"].tap()
+      guard reach(app.staticTexts["Research synthesis memo"].firstMatch, in: app) else { return }
+    }
+
+    launchDocumentFixture(png, reset: false, in: app)
+    guard openDocumentImportSubjects(in: app), reach(addSubject, in: app) else { return }
+    addSubject.tap()
+    guard openDocumentReview(png, entry: "subject.importDocument", in: app) else { return }
+    guard reach(name, in: app) else { return }
+    XCTAssertEqual(name.value as? String, "Interaction Prototyping")
+    XCTAssertEqual(element(app, id: "documentImport.subject.code").value as? String, "55501")
+    guard checkDocumentAssignment("Prototype walkthrough", weight: "40", due: "27", in: app) else { return }
+    attachScreenshot("PNG import review", app: app)
+    app.buttons["documentImport.save"].tap()
+    let prototypeSubject = app.staticTexts["Interaction Prototyping"].firstMatch
+    guard reach(prototypeSubject, in: app) else { return }
+    prototypeSubject.tap()
+    guard reach(app.staticTexts["Prototype walkthrough"].firstMatch, in: app) else { return }
+  }
+
+  private func launchDocumentFixture(_ filename: String, reset: Bool, in app: XCUIApplication) {
+    if !reset { app.terminate() }
+    app.launchArguments = [reset ? "-ui-smoke" : "-ui-smoke-preserve"]
+    app.launchEnvironment["UNICOACH_DOCUMENT_FIXTURE"] = filename
+    app.launch()
+  }
+
+  private func openDocumentImportSubjects(in app: XCUIApplication) -> Bool {
+    let card = app.buttons["home.catalogue.subjects"]
+    guard reach(card, in: app) else { return false }
+    card.tap()
+    XCTAssertTrue(app.segmentedControls.buttons["Subjects"].isSelected)
+    return true
+  }
+
+  private func openDocumentReview(_ filename: String, entry: String, in app: XCUIApplication) -> Bool {
+    let button = app.buttons[entry]
+    guard reach(button, in: app) else { return false }
+    button.tap()
+    let files = app.buttons["documentImport.files"]
+    XCTAssertTrue(files.waitForExistence(timeout: 5))
+    files.tap()
+    XCTAssertTrue(app.navigationBars["Review document"].waitForExistence(timeout: 20))
+    let source = element(app, id: "documentImport.filename")
+    guard reach(source, in: app) else { return false }
+    XCTAssertTrue((source.label + " " + (source.value as? String ?? "")).contains(filename))
+    return true
+  }
+
+  private func checkDocumentAssignment(
+    _ title: String, weight: String, due: String, in app: XCUIApplication
+  ) -> Bool {
+    let row = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "documentImport.assignment.", title
+    )).firstMatch
+    guard reach(row, in: app) else { return false }
+    let summary = row.label + " " + (row.value as? String ?? "")
+    XCTAssertTrue(summary.contains(weight + "% weighting"), summary)
+    XCTAssertTrue(summary.contains(due), summary)
+    if due != "No due date" { XCTAssertFalse(summary.contains("No due date"), summary) }
+    return true
+  }
+
   func testAlphaFileImport() throws {
     guard ProcessInfo.processInfo.environment["UNICOACH_ALPHA_IMPORT_FIXTURES"] == "1" else {
       throw XCTSkip("Requires the alpha Files fixtures and temporary file-sharing test build.")

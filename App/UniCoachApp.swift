@@ -141,6 +141,7 @@ struct SubjectsView: View {
   @Environment(\.horizontalSizeClass) private var sizeClass
   @State private var editing: Subject?
   @State private var newAssignment: Assignment?
+  @State private var showAssignmentImport = false
   @State private var query = ""
   @State private var filter = "All"
   @Binding var mode: LearningSection
@@ -219,7 +220,8 @@ struct SubjectsView: View {
             addSubject: { editing = Subject(colorHex: "#287C76") })
         case .assignments:
           AssignmentsDashboard(
-            subjects: realSubjects, assignments: assignments, query: query, feedbackFilter: $assignmentFilter
+            subjects: realSubjects, assignments: assignments, query: query, feedbackFilter: $assignmentFilter,
+            importWithoutSubject: { showAssignmentImport = true }
           ) { selectedID in
             if let id = selectedID ?? realSubjects.first?.id {
               newAssignment = Assignment(subjectID: id, dueDate: nil)
@@ -251,6 +253,12 @@ struct SubjectsView: View {
       .navigationTitle("My Learning")
       .sheet(item: $editing) { SubjectEditor(subject: $0) }
       .sheet(item: $newAssignment) { AssignmentEditor(assignment: $0) }
+      .sheet(isPresented: $showAssignmentImport) {
+        DocumentImportView(entry: .assignment) {
+          semester = "All semesters"
+          assignmentFilter = .all
+        }
+      }
   }
 
 }
@@ -270,6 +278,8 @@ struct SubjectEditor: View {
   @State private var subject: Subject
   @State private var creditsDraft: String?
   @State private var invalidCredits = false
+  @State private var showDocumentImport = false
+  @State private var documentSaved = false
   let colors = ["#287C76", "#526EA3", "#A3664C", "#806395", "#A58435"]
   init(subject: Subject) {
     _subject = State(initialValue: subject)
@@ -278,6 +288,12 @@ struct SubjectEditor: View {
   var body: some View {
     NavigationStack {
       Form {
+        if !app.data.subjects.contains(where: { $0.id == subject.id }) {
+          Section {
+            Button("Import PDF or photo", systemImage: "doc.viewfinder") { showDocumentImport = true }
+              .accessibilityIdentifier("subject.importDocument")
+          }
+        }
         Section("Subject") {
           Image("SubjectBookHero").resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 130).accessibilityHidden(true)
           TextField("Name", text: $subject.name).accessibilityIdentifier("subject.name")
@@ -329,12 +345,17 @@ struct SubjectEditor: View {
           Text(UniCoachError.invalidCredits.localizedDescription)
         }
     }
+    .sheet(isPresented: $showDocumentImport, onDismiss: {
+      if documentSaved { dismiss() }
+    }) {
+      DocumentImportView(entry: .subject) { documentSaved = true }
+    }
   }
 
   private func saveSubject() {
     let credits: Double?
     if let creditsDraft {
-      credits = parseCredits(creditsDraft)
+      credits = parseNonnegativeDecimal(creditsDraft, locale: locale)
     } else {
       credits = subject.credits
     }
@@ -349,24 +370,7 @@ struct SubjectEditor: View {
     }
   }
 
-  private func parseCredits(_ input: String) -> Double? {
-    let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    if value.isEmpty { return 0 }
 
-    // Foundation can parse a valid numeric prefix and ignore invalid trailing text.
-    // Check the full input before using the locale's grouping and decimal rules.
-    let parts = value.components(separatedBy: locale.decimalSeparator ?? ".")
-    guard parts.count <= 2 else { return nil }
-    let groups = parts[0].components(separatedBy: locale.groupingSeparator ?? ",")
-    guard groups.count == 1 || groups.allSatisfy({ !$0.isEmpty }) else { return nil }
-    let digits = (groups + Array(parts.dropFirst())).joined()
-    guard !digits.isEmpty, digits.allSatisfy({ digit in
-      digit.wholeNumberValue.map { (0...9).contains($0) } == true
-    }) else { return nil }
-
-    let format = FloatingPointFormatStyle<Double>.number.locale(locale)
-    return try? FloatingPointParseStrategy(format: format, lenient: false).parse(value)
-  }
 }
 
 struct SubjectDetail: View {
@@ -465,6 +469,7 @@ struct SubjectDetail: View {
               Label("Add goal", systemImage: "plus")
             }
           }
+          ImportedDocumentSources(references: subject.sourceReferences)
           Section { Button("Delete subject", role: .destructive) { deleting = true } }
         }.navigationTitle("Subject").navigationBarTitleDisplayMode(.inline).toolbar {
           Button("Edit") { editing = subject }.accessibilityIdentifier("subject.edit")
@@ -735,6 +740,7 @@ struct AssignmentsDashboard: View {
   let assignments: [Assignment]
   let query: String
   @Binding var feedbackFilter: AssignmentFeedbackFilter
+  let importWithoutSubject: () -> Void
   let addAssignment: (UUID?) -> Void
   @State private var selectedSubject: UUID?
   @State private var latestFirst = false
@@ -770,6 +776,10 @@ struct AssignmentsDashboard: View {
       LearningSectionHeader(
         title: "Assignments", addTitle: "Add assignment", addID: "assignments.add",
         addDisabled: subjects.isEmpty, onAdd: { addAssignment(selectedSubject) })
+      if subjects.isEmpty {
+        Button("Import PDF or photo", systemImage: "doc.viewfinder", action: importWithoutSubject)
+          .buttonStyle(.bordered).accessibilityIdentifier("assignments.importDocument")
+      }
       LearningArtBanner(
         title: selectedSubject == nil ? "Your assignments" : "Subject assignments",
         subtitle: "Review your work, feedback and upcoming dates.", imageName: "AssignmentsHero")
